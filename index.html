@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る - オンライン対戦</title>
+  <title>犯人は踊る ver 1.1 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -524,13 +524,19 @@
 
       return (
         <div className="min-h-screen flex flex-col justify-between max-w-6xl mx-auto px-3 py-3 select-none">
+          {/* HEADER */}
           <header className="flex justify-between items-center bg-amber-400 border-4 border-slate-900 rounded-2xl p-2.5 pop-shadow mb-3">
             <div className="flex items-center gap-2">
               <div className="w-9 h-9 bg-rose-500 rounded-full border-2 border-slate-900 flex items-center justify-center text-lg shadow">
                 🕵️
               </div>
               <div>
-                <h1 className="text-lg font-black text-slate-900 tracking-wider">犯人は踊る</h1>
+                <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
+                  犯人は踊る
+                  <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
+                    ver 1.1
+                  </span>
+                </h1>
                 <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
               </div>
             </div>
@@ -550,6 +556,7 @@
             </div>
           </header>
 
+          {/* TITLE SCREEN */}
           {screen === 'title' && (
             <div className="my-auto py-8 flex flex-col items-center">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-8 max-w-md w-full pop-shadow text-slate-900 text-center">
@@ -605,6 +612,7 @@
             </div>
           )}
 
+          {/* LOBBY SCREEN */}
           {screen === 'lobby' && (
             <div className="my-auto py-8 flex flex-col items-center">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-md w-full pop-shadow text-slate-900">
@@ -657,8 +665,10 @@
             </div>
           )}
 
+          {/* MAIN CARD TABLE GAME SCREEN */}
           {screen === 'game' && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 my-auto">
+              
               <div className="md:col-span-3 felt-table rounded-3xl p-4 flex flex-col justify-between min-h-[560px] relative overflow-hidden">
                 
                 <div className="flex justify-around items-center w-full z-10 pt-2">
