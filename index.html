@@ -15,8 +15,8 @@
     
     body {
       font-family: 'M PLUS Rounded 1c', sans-serif;
-      background-color: #0f382c;
-      background-image: radial-gradient(#155241 2px, transparent 2px);
+      background-color: #0d261e;
+      background-image: radial-gradient(#154738 2px, transparent 2px);
       background-size: 24px 24px;
       color: #ffffff;
       touch-action: manipulation;
@@ -35,18 +35,19 @@
       box-shadow: 0 2px 0 #b91c1c;
     }
 
-    .card-pop {
-      box-shadow: 0 8px 0 rgba(0, 0, 0, 0.3), inset 0 2px 4px rgba(255, 255, 255, 0.4);
-      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    }
-    .card-pop:hover {
-      transform: translateY(-12px) rotate(-1deg) scale(1.03);
+    .felt-table {
+      background: radial-gradient(circle, #1f6b54 0%, #0c3629 100%);
+      border: 14px solid #78350f;
+      box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.7), 0 20px 40px rgba(0, 0, 0, 0.6);
     }
 
-    .felt-table {
-      background: radial-gradient(circle, #1a634e 0%, #0d3026 100%);
-      border: 12px solid #854d0e;
-      box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.6), 0 20px 40px rgba(0, 0, 0, 0.5);
+    .card-real {
+      box-shadow: 0 8px 16px rgba(0,0,0,0.4), inset 0 2px 3px rgba(255,255,255,0.8);
+      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .card-real:hover {
+      transform: translateY(-16px) scale(1.05);
+      z-index: 30;
     }
 
     .custom-scrollbar::-webkit-scrollbar {
@@ -60,6 +61,14 @@
       background: #f59e0b;
       border-radius: 4px;
     }
+
+    @keyframes popIn {
+      0% { transform: scale(0.5) translateY(20px); opacity: 0; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    .animate-pop-card {
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
   </style>
 </head>
 <body class="min-h-screen select-none">
@@ -69,17 +78,61 @@
     const { useState, useEffect, useRef } = React;
 
     const CARD_TYPES = {
-      FIRST_DISCOVERER: { id: 'first_discoverer', name: '第一発見者', bg: 'bg-amber-400', border: 'border-amber-600', text: 'text-amber-950', icon: 'fa-magnifying-glass', desc: '手札にある人が最初に場に出します。' },
-      CRIMINAL: { id: 'criminal', name: '犯人', bg: 'bg-rose-500', border: 'border-rose-700', text: 'text-white', icon: 'fa-user-ninja', desc: '最後まで手札に持ち、手札1枚として出すと勝利！' },
-      DETECTIVE: { id: 'detective', name: '探偵', bg: 'bg-sky-400', border: 'border-sky-600', text: 'text-sky-950', icon: 'fa-user-tie', desc: '1人を指名。「犯人ですか？」と当てれば勝利！' },
-      ALIBI: { id: 'alibi', name: 'アリバイ', bg: 'bg-emerald-400', border: 'border-emerald-600', text: 'text-emerald-950', icon: 'fa-shield-halved', desc: '犯人カードを持っていても「犯人ではありません」と逃げられる。' },
-      SCHEME: { id: 'scheme', name: 'たくらみ', bg: 'bg-purple-500', border: 'border-purple-700', text: 'text-white', icon: 'fa-masks-theater', desc: '犯人が勝利したとき、自分も一緒に勝利！' },
-      DOG: { id: 'dog', name: 'いぬ', bg: 'bg-orange-400', border: 'border-orange-600', text: 'text-orange-950', icon: 'fa-dog', desc: '相手の手札から1枚引く。それが「犯人」なら勝利！' },
-      BOY: { id: 'boy', name: '少年', bg: 'bg-cyan-300', border: 'border-cyan-500', text: 'text-cyan-950', icon: 'fa-child-reaching', desc: '犯人が誰かを目撃できる。' },
-      CITIZEN: { id: 'citizen', name: '一般人', bg: 'bg-slate-300', border: 'border-slate-500', text: 'text-slate-800', icon: 'fa-user-group', desc: '効果なし。安全に手札を消費。' },
-      RUMOR: { id: 'rumor', name: 'うわさ', bg: 'bg-pink-400', border: 'border-pink-600', text: 'text-pink-950', icon: 'fa-comments', desc: '全員が右隣の人の手札からランダムに1枚引く。' },
-      INFORMATION: { id: 'information', name: '情報操作', bg: 'bg-teal-300', border: 'border-teal-500', text: 'text-teal-950', icon: 'fa-arrow-rotate-right', desc: '全員が左隣の人に好きな手札を1枚渡す。' },
-      TRADE: { id: 'trade', name: '取り引き', bg: 'bg-yellow-400', border: 'border-yellow-600', text: 'text-yellow-950', icon: 'fa-handshake', desc: '指定した人とカードを1枚交換する。' }
+      FIRST_DISCOVERER: { 
+        id: 'first_discoverer', name: '第一発見者', bg: 'bg-gradient-to-b from-amber-300 to-amber-500', 
+        border: 'border-amber-700', text: 'text-amber-950', icon: 'fa-magnifying-glass', 
+        tag: '事件発生', desc: '手札にある人が最初に場に出します。' 
+      },
+      CRIMINAL: { 
+        id: 'criminal', name: '犯人', bg: 'bg-gradient-to-b from-rose-500 to-rose-700', 
+        border: 'border-rose-950', text: 'text-white', icon: 'fa-user-ninja', 
+        tag: '勝利カード', desc: '最後まで手札に持ち、最後の1枚として出すと勝利！' 
+      },
+      DETECTIVE: { 
+        id: 'detective', name: '探偵', bg: 'bg-gradient-to-b from-sky-300 to-sky-500', 
+        border: 'border-sky-700', text: 'text-sky-950', icon: 'fa-user-tie', 
+        tag: '告発', desc: '1人を指名。「犯人ですか？」と問い詰め、当てれば勝利！' 
+      },
+      ALIBI: { 
+        id: 'alibi', name: 'アリバイ', bg: 'bg-gradient-to-b from-emerald-300 to-emerald-500', 
+        border: 'border-emerald-700', text: 'text-emerald-950', icon: 'fa-shield-halved', 
+        tag: '防御', desc: '犯人カードを持っていても「犯人ではありません」と言える。' 
+      },
+      SCHEME: { 
+        id: 'scheme', name: 'たくらみ', bg: 'bg-gradient-to-b from-purple-400 to-purple-600', 
+        border: 'border-purple-900', text: 'text-white', icon: 'fa-masks-theater', 
+        tag: '共犯者', desc: '犯人が勝利したとき、自分も一緒に勝利！' 
+      },
+      DOG: { 
+        id: 'dog', name: 'いぬ', bg: 'bg-gradient-to-b from-orange-300 to-orange-500', 
+        border: 'border-orange-700', text: 'text-orange-950', icon: 'fa-dog', 
+        tag: '捜査犬', desc: '相手の手札を1枚引く。それが「犯人」なら単独勝利！' 
+      },
+      BOY: { 
+        id: 'boy', name: '少年', bg: 'bg-gradient-to-b from-cyan-200 to-cyan-400', 
+        border: 'border-cyan-600', text: 'text-cyan-950', icon: 'fa-child-reaching', 
+        tag: '目撃者', desc: '誰が犯人カードを持っているかを目撃できる。' 
+      },
+      CITIZEN: { 
+        id: 'citizen', name: '一般人', bg: 'bg-gradient-to-b from-slate-200 to-slate-400', 
+        border: 'border-slate-600', text: 'text-slate-900', icon: 'fa-user-group', 
+        tag: '無効', desc: '効果なし。安全に手札を1枚減らせる。' 
+      },
+      RUMOR: { 
+        id: 'rumor', name: 'うわさ', bg: 'bg-gradient-to-b from-pink-300 to-pink-500', 
+        border: 'border-pink-700', text: 'text-pink-950', icon: 'fa-comments', 
+        tag: '全体交換', desc: '全員が右隣の人の手札からランダムに1枚引く。' 
+      },
+      INFORMATION: { 
+        id: 'information', name: '情報操作', bg: 'bg-gradient-to-b from-teal-200 to-teal-400', 
+        border: 'border-teal-600', text: 'text-teal-950', icon: 'fa-arrow-rotate-right', 
+        tag: '手札移動', desc: '全員が左隣の人に好きな手札を1枚渡す。' 
+      },
+      TRADE: { 
+        id: 'trade', name: '取り引き', bg: 'bg-gradient-to-b from-yellow-300 to-yellow-500', 
+        border: 'border-yellow-700', text: 'text-yellow-950', icon: 'fa-handshake', 
+        tag: '1対1交換', desc: '指定したプレイヤーとカードを1枚交換する。' 
+      }
     };
 
     function App() {
@@ -92,8 +145,10 @@
       const [players, setPlayers] = useState([]);
       const [myId, setMyId] = useState(null);
       const [turnIndex, setTurnIndex] = useState(0);
+      const [playedStack, setPlayedStack] = useState([]);
       const [logs, setLogs] = useState([]);
       const [winner, setWinner] = useState(null);
+      const [pendingTargetCard, setPendingTargetCard] = useState(null);
       const [showRules, setShowRules] = useState(false);
       const logEndRef = useRef(null);
 
@@ -180,7 +235,7 @@
             return updated;
           });
         } else if (data.type === 'PLAY_CARD') {
-          handlePlayCard(data.playerIdx, data.cardIdx, data.extraData);
+          processCardPlay(data.playerIdx, data.cardIdx, data.targetId);
         }
       };
 
@@ -190,11 +245,13 @@
         } else if (data.type === 'START_GAME') {
           setPlayers(data.players);
           setTurnIndex(data.turnIndex);
+          setPlayedStack(data.playedStack || []);
           setLogs(data.logs);
           setScreen('game');
         } else if (data.type === 'UPDATE_STATE') {
           setPlayers(data.players);
           setTurnIndex(data.turnIndex);
+          setPlayedStack(data.playedStack || []);
           setLogs(data.logs);
           if (data.winner) {
             setWinner(data.winner);
@@ -244,6 +301,7 @@
 
         setPlayers(updatedPlayers);
         setTurnIndex(starterIdx);
+        setPlayedStack([]);
         setLogs(initialLogs);
         setScreen('game');
 
@@ -251,20 +309,40 @@
           type: 'START_GAME',
           players: updatedPlayers,
           turnIndex: starterIdx,
+          playedStack: [],
           logs: initialLogs
         });
       };
 
-      const handlePlayCard = (playerIdx, cardIdx, extraData = {}) => {
-        if (!isHost) {
-          connectionsRef.current[0].send({ type: 'PLAY_CARD', playerIdx, cardIdx, extraData });
+      const clickPlayCard = (cardIdx) => {
+        const myIdx = players.findIndex(p => p.id === myId);
+        if (turnIndex !== myIdx) return;
+
+        const card = players[myIdx].hand[cardIdx];
+
+        if (['detective', 'dog', 'trade'].includes(card.id)) {
+          setPendingTargetCard({ cardIdx, card });
           return;
         }
 
+        submitPlayCard(myIdx, cardIdx, null);
+      };
+
+      const submitPlayCard = (playerIdx, cardIdx, targetId) => {
+        if (!isHost) {
+          connectionsRef.current[0].send({ type: 'PLAY_CARD', playerIdx, cardIdx, targetId });
+          setPendingTargetCard(null);
+          return;
+        }
+        processCardPlay(playerIdx, cardIdx, targetId);
+        setPendingTargetCard(null);
+      };
+
+      const processCardPlay = (playerIdx, cardIdx, targetId) => {
         const currentPlayer = players[playerIdx];
         const card = currentPlayer.hand[cardIdx];
 
-        let newLogs = [...logs, `📢 ${currentPlayer.name} が【${card.name}】を出しました！`];
+        let newLogs = [...logs, `📢 ${currentPlayer.name} が【${card.name}】を中央に出しました！`];
 
         const newHand = [...currentPlayer.hand];
         newHand.splice(cardIdx, 1);
@@ -276,22 +354,24 @@
           played: [...currentPlayer.played, card]
         };
 
+        const newPlayedStack = [...playedStack, { card, playedBy: currentPlayer.name }];
+
         let gameWinner = null;
         const actor = nextPlayers[playerIdx];
 
         switch (card.id) {
           case 'first_discoverer':
-            newLogs.push(`🔍 事件発生！${actor.name} が事件を発見！`);
+            newLogs.push(`🔍 事件発生！${actor.name} が遺体を発見しました。`);
             break;
 
           case 'criminal':
             gameWinner = calculateWinner('criminal', playerIdx, nextPlayers);
-            newLogs.push(`😈 犯人が逃げ切った！【犯人】を出した ${actor.name} の勝利！`);
+            newLogs.push(`😈 犯人が踊りきった！【犯人】を出した ${actor.name} の見事な勝利！`);
             break;
 
           case 'detective':
-            if (extraData.targetId !== undefined) {
-              const target = nextPlayers.find(p => p.id === extraData.targetId);
+            if (targetId) {
+              const target = nextPlayers.find(p => p.id === targetId);
               newLogs.push(`🕵️ ${actor.name} が ${target.name} に「あなたが犯人ですか？」と追及！`);
 
               const hasCriminal = target.hand.some(c => c.id === 'criminal');
@@ -301,7 +381,7 @@
                 newLogs.push(`🎯 ${target.name} 「参りました…私が犯人です！」`);
                 gameWinner = calculateWinner('detective', playerIdx, nextPlayers);
               } else if (hasCriminal && hasAlibi) {
-                newLogs.push(`🛡️ ${target.name} 「アリバイがあります！犯人ではありません。」（回避成功！）`);
+                newLogs.push(`🛡️ ${target.name} 「アリバイがあります！犯人ではありません。」（アリバイで回避成功！）`);
               } else {
                 newLogs.push(`❌ ${target.name} 「違います！犯人ではありません。」`);
               }
@@ -309,8 +389,8 @@
             break;
 
           case 'dog':
-            if (extraData.targetId !== undefined) {
-              const target = nextPlayers.find(p => p.id === extraData.targetId);
+            if (targetId) {
+              const target = nextPlayers.find(p => p.id === targetId);
               if (target.hand.length > 0) {
                 const stolenIdx = Math.floor(Math.random() * target.hand.length);
                 const stolen = target.hand[stolenIdx];
@@ -318,10 +398,10 @@
                 target.hand.splice(stolenIdx, 1);
                 actor.hand.push(stolen);
 
-                newLogs.push(`🐕 ${actor.name} の「いぬ」が ${target.name} から【${stolen.name}】を引き抜いた！`);
+                newLogs.push(`🐕 ${actor.name} の「いぬ」が ${target.name} の手札から【${stolen.name}】を引き抜いた！`);
 
                 if (stolen.id === 'criminal') {
-                  newLogs.push(`🎉 「いぬ」が犯人を見事にクンクン当てた！`);
+                  newLogs.push(`🎉 「いぬ」が犯人カードをクンクン当てました！`);
                   gameWinner = calculateWinner('dog', playerIdx, nextPlayers);
                 }
               }
@@ -330,7 +410,60 @@
 
           case 'boy':
             const crim = nextPlayers.find(p => p.hand.some(c => c.id === 'criminal'));
-            newLogs.push(crim ? `👁️ 「少年」が目撃した！犯人は… ${crim.name} だ！（目撃者のみ）` : `👁️ 「少年」は何も目撃できなかった…`);
+            newLogs.push(crim ? `👁️ 「少年」が目撃した！犯人は… ${crim.name} だ！（目撃者のみ確認）` : `👁️ 「少年」は何も目撃できなかった…`);
+            break;
+
+          case 'trade':
+            if (targetId) {
+              const target = nextPlayers.find(p => p.id === targetId);
+              if (actor.hand.length > 0 && target.hand.length > 0) {
+                const actorCard = actor.hand.pop();
+                const targetCard = target.hand.pop();
+                actor.hand.push(targetCard);
+                target.hand.push(actorCard);
+                newLogs.push(`🤝 ${actor.name} と ${target.name} がカードを1枚交換しました。`);
+              }
+            }
+            break;
+
+          case 'rumor':
+            newLogs.push(`🗣️ うわさが流れた！全員が右隣の人の手札から1枚引き抜きます。`);
+            const pCount = nextPlayers.length;
+            const stolenCards = [];
+            for (let i = 0; i < pCount; i++) {
+              const rightIdx = (i + 1) % pCount;
+              const rightHand = nextPlayers[rightIdx].hand;
+              if (rightHand.length > 0) {
+                const randIdx = Math.floor(Math.random() * rightHand.length);
+                stolenCards.push({ from: rightIdx, to: i, card: rightHand[randIdx], randIdx });
+              }
+            }
+            stolenCards.forEach(item => {
+              nextPlayers[item.from].hand.splice(item.randIdx, 1);
+            });
+            stolenCards.forEach(item => {
+              nextPlayers[item.to].hand.push(item.card);
+            });
+            break;
+
+          case 'information':
+            newLogs.push(`🔄 情報操作！全員が左隣の人にカードを1枚ずつ渡しました。`);
+            const countP = nextPlayers.length;
+            const passedCards = [];
+            for (let i = 0; i < countP; i++) {
+              const leftIdx = (i - 1 + countP) % countP;
+              const pHand = nextPlayers[i].hand;
+              if (pHand.length > 0) {
+                passedCards.push({ from: i, to: leftIdx, card: pHand[0] });
+              }
+            }
+            passedCards.forEach(item => {
+              const idx = nextPlayers[item.from].hand.findIndex(c => c.instanceId === item.card.instanceId);
+              if (idx !== -1) nextPlayers[item.from].hand.splice(idx, 1);
+            });
+            passedCards.forEach(item => {
+              nextPlayers[item.to].hand.push(item.card);
+            });
             break;
 
           default:
@@ -346,6 +479,7 @@
 
         setPlayers(nextPlayers);
         setTurnIndex(nextTurn);
+        setPlayedStack(newPlayedStack);
         setLogs(newLogs);
 
         if (gameWinner) {
@@ -357,6 +491,7 @@
           type: 'UPDATE_STATE',
           players: nextPlayers,
           turnIndex: nextTurn,
+          playedStack: newPlayedStack,
           logs: newLogs,
           winner: gameWinner
         });
@@ -374,16 +509,29 @@
         return { type, names: winners.join(', ') };
       };
 
+      const getOrderedPlayersForTable = () => {
+        const myIdx = players.findIndex(p => p.id === myId);
+        if (myIdx === -1) return players;
+        const result = [];
+        for (let i = 0; i < players.length; i++) {
+          result.push(players[(myIdx + i) % players.length]);
+        }
+        return result;
+      };
+
+      const orderedPlayers = getOrderedPlayersForTable();
+      const lastPlayed = playedStack.length > 0 ? playedStack[playedStack.length - 1] : null;
+
       return (
-        <div className="min-h-screen flex flex-col justify-between max-w-5xl mx-auto px-4 py-4 select-none">
-          <header className="flex justify-between items-center bg-amber-400 border-4 border-slate-900 rounded-2xl p-3 pop-shadow mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-rose-500 rounded-full border-2 border-slate-900 flex items-center justify-center text-xl shadow">
+        <div className="min-h-screen flex flex-col justify-between max-w-6xl mx-auto px-3 py-3 select-none">
+          <header className="flex justify-between items-center bg-amber-400 border-4 border-slate-900 rounded-2xl p-2.5 pop-shadow mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 bg-rose-500 rounded-full border-2 border-slate-900 flex items-center justify-center text-lg shadow">
                 🕵️
               </div>
               <div>
-                <h1 className="text-xl font-black text-slate-900 tracking-wider">犯人は踊る</h1>
-                <p className="text-[10px] text-amber-950 font-extrabold">ONLINE POP EDITION</p>
+                <h1 className="text-lg font-black text-slate-900 tracking-wider">犯人は踊る</h1>
+                <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
               </div>
             </div>
 
@@ -395,7 +543,7 @@
               )}
               <button 
                 onClick={() => setShowRules(true)}
-                className="bg-sky-400 hover:bg-sky-300 text-slate-900 border-2 border-slate-900 px-3 py-1.5 rounded-xl font-extrabold text-xs shadow transition active:translate-y-0.5"
+                className="bg-sky-400 hover:bg-sky-300 text-slate-900 border-2 border-slate-900 px-3 py-1 rounded-xl font-extrabold text-xs shadow"
               >
                 <i className="fa-solid fa-book-open"></i> ルール
               </button>
@@ -406,7 +554,7 @@
             <div className="my-auto py-8 flex flex-col items-center">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-8 max-w-md w-full pop-shadow text-slate-900 text-center">
                 <div className="inline-block bg-rose-500 text-white text-xs font-black px-4 py-1.5 rounded-full border-2 border-slate-900 mb-4 shadow">
-                  3桁のコードで即プレイ！
+                  3桁コードでオンライン対戦！
                 </div>
                 <h2 className="text-3xl font-black mb-6 tracking-wide">部屋を選んで遊ぼう！</h2>
 
@@ -472,7 +620,7 @@
 
                 <div className="bg-amber-100 border-3 border-slate-900 rounded-2xl p-4 mb-6">
                   <h3 className="font-black text-xs text-slate-700 mb-3 flex items-center gap-2">
-                    <i className="fa-solid fa-users text-rose-500"></i> 参加中のメンバー ({players.length}/5人)
+                    <i className="fa-solid fa-users text-rose-500"></i> 参加メンバー ({players.length}/5人)
                   </h3>
                   <div className="space-y-2">
                     {players.map((p, i) => (
@@ -510,96 +658,180 @@
           )}
 
           {screen === 'game' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-auto">
-              <div className="md:col-span-2 felt-table rounded-3xl p-4 flex flex-col justify-between min-h-[480px] relative">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {players.filter(p => p.id !== myId).map(p => {
-                    const isCurrentTurn = players[turnIndex]?.id === p.id;
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 my-auto">
+              <div className="md:col-span-3 felt-table rounded-3xl p-4 flex flex-col justify-between min-h-[560px] relative overflow-hidden">
+                
+                <div className="flex justify-around items-center w-full z-10 pt-2">
+                  {orderedPlayers.slice(1).map(p => {
+                    const isTurn = players[turnIndex]?.id === p.id;
                     return (
                       <div
                         key={p.id}
-                        className={`p-2.5 rounded-2xl border-3 transition ${
-                          isCurrentTurn
-                            ? 'bg-amber-400 border-slate-900 text-slate-900 font-black shadow-lg scale-105 ring-4 ring-rose-400'
-                            : 'bg-slate-900/80 border-emerald-600 text-white'
+                        className={`flex flex-col items-center p-2 rounded-2xl border-3 transition backdrop-blur-sm ${
+                          isTurn
+                            ? 'bg-amber-400 border-slate-900 text-slate-900 font-black shadow-xl scale-110 ring-4 ring-rose-500 animate-bounce'
+                            : 'bg-slate-900/85 border-emerald-600 text-white'
                         }`}
                       >
-                        <div className="text-xs font-black truncate">{p.name}</div>
-                        <div className="text-[10px] opacity-80 mt-1 flex items-center justify-between">
-                          <span>手札:</span>
-                          <span className="font-mono bg-black/40 px-1.5 py-0.5 rounded text-amber-300 font-bold">
-                            {p.hand.length}枚
-                          </span>
+                        <div className="flex items-center gap-1.5 px-2">
+                          <i className="fa-solid fa-user text-xs"></i>
+                          <span className="text-xs font-black max-w-[100px] truncate">{p.name}</span>
+                        </div>
+                        
+                        <div className="flex gap-1 mt-1.5">
+                          {p.hand.map((_, hIdx) => (
+                            <div
+                              key={hIdx}
+                              className="w-4 h-6 rounded bg-gradient-to-br from-indigo-800 to-rose-900 border border-amber-300/60 shadow flex items-center justify-center text-[8px] text-amber-300"
+                            >
+                              🎴
+                            </div>
+                          ))}
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                <div className="text-center my-4">
-                  <div className="inline-block bg-amber-400 border-3 border-slate-900 px-6 py-2 rounded-full pop-shadow">
-                    <span className="text-xs font-black text-slate-900">現在のターン:</span>
-                    <span className="text-lg font-black text-rose-600 ml-2">
-                      {players[turnIndex]?.name} {players[turnIndex]?.id === myId && '(あなた)'}
-                    </span>
-                  </div>
+                <div className="my-auto flex flex-col items-center justify-center z-10">
+                  <span className="text-[11px] font-black bg-slate-900/80 text-amber-300 px-3 py-1 rounded-full border border-amber-400/40 mb-2">
+                    中央の場 (出したカード)
+                  </span>
+
+                  {lastPlayed ? (
+                    <div className="flex flex-col items-center animate-pop-card">
+                      <div className={`card-real w-32 h-48 rounded-2xl p-3 ${lastPlayed.card.bg} border-4 ${lastPlayed.card.border} ${lastPlayed.card.text} flex flex-col justify-between relative`}>
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-[9px] font-black bg-black/20 px-1.5 py-0.5 rounded border border-white/20">
+                              {lastPlayed.card.tag}
+                            </span>
+                            <i className={`fa-solid ${lastPlayed.card.icon} text-sm opacity-80`}></i>
+                          </div>
+                          <h4 className="font-black text-sm text-center my-1 tracking-wider">{lastPlayed.card.name}</h4>
+                        </div>
+                        
+                        <div className="my-auto text-center">
+                          <i className={`fa-solid ${lastPlayed.card.icon} text-3xl opacity-30`}></i>
+                        </div>
+
+                        <p className="text-[9px] font-bold leading-tight text-center bg-white/30 backdrop-blur-sm p-1 rounded-lg border border-white/40">
+                          {lastPlayed.card.desc}
+                        </p>
+                      </div>
+
+                      <div className="mt-2 text-xs font-black bg-amber-400 text-slate-900 px-3 py-0.5 rounded-full border border-slate-900 shadow">
+                        出者: {lastPlayed.playedBy}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-32 h-48 rounded-2xl border-4 border-dashed border-emerald-400/40 flex flex-col items-center justify-center text-emerald-200/60 font-bold text-xs">
+                      <i className="fa-solid fa-layer-group text-2xl mb-2"></i>
+                      カード未提出
+                    </div>
+                  )}
                 </div>
 
-                <div className="bg-slate-900/90 border-3 border-amber-500 rounded-2xl p-3">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-black text-amber-400 flex items-center gap-1">
-                      <i className="fa-solid fa-hand"></i> あなたの手札 ({players.find(p => p.id === myId)?.hand.length || 0}枚)
+                <div className="bg-slate-950/90 border-3 border-amber-400 rounded-3xl p-3 z-10 shadow-2xl">
+                  <div className="flex justify-between items-center mb-2 px-1">
+                    <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                      <i className="fa-solid fa-hand text-rose-400"></i> あなたの手札 ({players.find(p => p.id === myId)?.hand.length || 0}枚)
                     </span>
+
+                    {players[turnIndex]?.id === myId ? (
+                      <span className="text-xs font-black bg-rose-500 text-white px-3 py-1 rounded-full border border-slate-900 animate-pulse">
+                        あなたの番です！カードを選んで出してください
+                      </span>
+                    ) : (
+                      <span className="text-xs font-bold text-slate-400">
+                        {players[turnIndex]?.name} の思考中...
+                      </span>
+                    )}
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     {players.find(p => p.id === myId)?.hand.map((card, cIdx) => {
                       const isMyTurn = players[turnIndex]?.id === myId;
                       return (
                         <div
                           key={card.instanceId}
-                          className={`card-pop rounded-xl p-2.5 ${card.bg} border-3 ${card.border} ${card.text} flex flex-col justify-between h-36 relative overflow-hidden`}
+                          className={`card-real rounded-2xl p-2.5 ${card.bg} border-3 ${card.border} ${card.text} flex flex-col justify-between h-40 relative`}
                         >
                           <div>
                             <div className="flex justify-between items-center mb-1">
-                              <span className="font-black text-xs">{card.name}</span>
-                              <i className={`fa-solid ${card.icon} text-xs opacity-70`}></i>
+                              <span className="text-[8px] font-black bg-black/20 px-1 rounded">
+                                {card.tag}
+                              </span>
+                              <i className={`fa-solid ${card.icon} text-xs opacity-80`}></i>
                             </div>
-                            <p className="text-[9px] font-bold leading-tight opacity-90 line-clamp-4">{card.desc}</p>
+                            <h5 className="font-black text-xs text-center mb-1">{card.name}</h5>
+                            <p className="text-[9px] font-bold leading-tight opacity-90">{card.desc}</p>
                           </div>
 
                           {isMyTurn ? (
                             <button
-                              onClick={() => {
-                                const myIdx = players.findIndex(p => p.id === myId);
-                                handlePlayCard(myIdx, cIdx);
-                              }}
-                              className="w-full bg-slate-900 hover:bg-rose-500 text-white font-black text-xs py-1 rounded-lg border border-white/20 transition shadow"
+                              onClick={() => clickPlayCard(cIdx)}
+                              className="w-full bg-slate-900 hover:bg-rose-600 text-white font-black text-xs py-1.5 rounded-xl border border-white/20 transition shadow pop-button mt-1"
                             >
-                              出す！
+                              場に出す！
                             </button>
                           ) : (
-                            <div className="text-[9px] font-black text-center opacity-50 py-0.5">待機中</div>
+                            <div className="text-[9px] font-black text-center opacity-50 py-1 bg-black/10 rounded-lg">待機</div>
                           )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
+
               </div>
 
-              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-4 flex flex-col h-[480px] pop-shadow">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-4 flex flex-col h-[560px] pop-shadow">
                 <h3 className="font-black text-xs text-slate-900 mb-3 flex items-center gap-1.5 border-b-2 border-slate-900 pb-2">
-                  <i className="fa-solid fa-list-ul text-rose-500"></i> ゲーム実況ログ
+                  <i className="fa-solid fa-list-ul text-rose-500"></i> ゲーム進行ログ
                 </h3>
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar text-xs font-bold">
                   {logs.map(log => (
-                    <div key={log.id} className="bg-white border-2 border-slate-900 p-2 rounded-xl text-slate-900 shadow-sm leading-relaxed">
+                    <div key={log.id} className="bg-white border-2 border-slate-900 p-2.5 rounded-xl text-slate-900 shadow-sm leading-relaxed">
                       {log.text}
                     </div>
                   ))}
                   <div ref={logEndRef} />
                 </div>
+              </div>
+            </div>
+          )}
+
+          {pendingTargetCard && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-sm w-full pop-shadow text-slate-900">
+                <h3 className="font-black text-base mb-1 text-center">対象のプレイヤーを選択</h3>
+                <p className="text-xs font-bold text-amber-950 text-center mb-4">
+                  【{pendingTargetCard.card.name}】を誰に対して使いますか？
+                </p>
+
+                <div className="space-y-2 mb-4">
+                  {players.filter(p => p.id !== myId && p.hand.length > 0).map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        const myIdx = players.findIndex(pl => pl.id === myId);
+                        submitPlayCard(myIdx, pendingTargetCard.cardIdx, p.id);
+                      }}
+                      className="w-full bg-white hover:bg-rose-500 hover:text-white font-black py-3 px-4 rounded-2xl border-3 border-slate-900 pop-button text-sm flex justify-between items-center transition"
+                    >
+                      <span>{p.name}</span>
+                      <span className="text-xs opacity-75">手札 {p.hand.length}枚</span>
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setPendingTargetCard(null)}
+                  className="w-full bg-slate-800 text-white font-black py-2 rounded-xl border-2 border-slate-900 text-xs"
+                >
+                  キャンセル
+                </button>
               </div>
             </div>
           )}
@@ -610,7 +842,7 @@
                 <div className="text-6xl mb-2">🏆</div>
                 <h2 className="text-3xl font-black mb-2 text-rose-600">ゲーム決着！</h2>
                 <div className="bg-white border-3 border-slate-900 p-4 rounded-2xl mb-6">
-                  <span className="text-xs font-black text-slate-500 block mb-1">勝者</span>
+                  <span className="text-xs font-black text-slate-500 block mb-1">勝利者</span>
                   <span className="text-xl font-black text-slate-900">{winner.names}</span>
                 </div>
 
