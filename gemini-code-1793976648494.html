@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>犯人は踊る - オンライン/ブラウザ対戦ゲーム</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap');
+    body {
+      font-family: 'Zen Maru Gothic', sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      touch-action: manipulation;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="min-h-screen select-none">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CARD_TYPES = {
+      FIRST_DISCOVERER: { id: 'first_discoverer', name: '第一発見者', count: 1, color: 'from-amber-500 to-yellow-600', icon: 'fa-magnifying-glass', desc: '手札にある人が最初に場に出します（ゲーム開始用）。' },
+      CRIMINAL: { id: 'criminal', name: '犯人', count: 1, color: 'from-red-600 to-rose-800', icon: 'fa-user-ninja', desc: '最後までバレずに手札に持ち、最後に手札1枚として出すと勝利！' },
+      DETECTIVE: { id: 'detective', name: '探偵', count: 4, color: 'from-blue-600 to-indigo-800', icon: 'fa-user-tie', desc: 'プレイヤー1人を指名。「犯人ですか？」と問い詰め、当てれば探偵の勝利！' },
+      ALIBI: { id: 'alibi', name: 'アリバイ', count: 5, color: 'from-emerald-600 to-teal-800', icon: 'fa-shield-halved', desc: '犯人カードを持っていても、手札にこのカードがあれば探偵に「犯人ではありません」と嘘をついて逃げられる。' },
+      SCHEME: { id: 'scheme', name: 'たくらみ', count: 2, color: 'from-purple-600 to-indigo-900', icon: 'fa-masks-theater', desc: '犯人が勝利したとき、自分も一緒に勝利できる（共犯者）。' },
+      DOG: { id: 'dog', name: 'いぬ', count: 1, color: 'from-amber-700 to-amber-900', icon: 'fa-dog', desc: '他プレイヤーの手札から1枚をオープンして引く。それが「犯人」なら「いぬ」の単独勝利！' },
+      BOY: { id: 'boy', name: '少年', count: 1, color: 'from-sky-500 to-blue-700', icon: 'fa-child-reaching', desc: '全員が目を閉じている間に犯人だけが目を開け、自分と目を合わせる。' },
+      CITIZEN: { id: 'citizen', name: '一般人', count: 2, color: 'from-slate-600 to-slate-800', icon: 'fa-user-group', desc: '特に効果なし。安全に手札を1枚消費できる。' },
+      RUMOR: { id: 'rumor', name: 'うわさ', count: 4, color: 'from-pink-600 to-rose-700', icon: 'fa-comments', desc: '全員が右隣の人の手札からランダムに1枚引く。' },
+      INFORMATION: { id: 'information', name: '情報操作', count: 3, color: 'from-cyan-600 to-blue-800', icon: 'fa-arrow-rotate-right', desc: '全員が左隣の人に好きな手札を1枚渡す。' },
+      TRADE: { id: 'trade', name: '取り引き', count: 5, color: 'from-orange-500 to-amber-700', icon: 'fa-handshake', desc: '指定したプレイヤー1人とカードを1枚ずつ交換する。' }
+    };
+
+    function App() {
+      const [gameMode, setGameMode] = useState(null);
+      const [playerCount, setPlayerCount] = useState(4);
+      const [players, setPlayers] = useState([]);
+      const [turnIndex, setTurnIndex] = useState(0);
+      const [gameStage, setGameStage] = useState('menu');
+      const [logs, setLogs] = useState([]);
+      const [winner, setWinner] = useState(null);
+      const [pendingAction, setPendingAction] = useState(null);
+      const [showRules, setShowRules] = useState(false);
+      const [selectedCardIndex, setSelectedCardIndex] = useState(null);
+      const logEndRef = useRef(null);
+
+      useEffect(() => {
+        if (logEndRef.current) {
+          logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, [logs]);
+
+      const addLog = (text) => {
+        setLogs(prev => [...prev, { id: Date.now() + Math.random(), text }]);
+      };
+
+      const startGame = (mode, count) => {
+        setGameMode(mode);
+        setPlayerCount(count);
+        
+        let deck = [];
+        deck.push({ ...CARD_TYPES.FIRST_DISCOVERER, instanceId: Math.random() });
+        deck.push({ ...CARD_TYPES.CRIMINAL, instanceId: Math.random() });
+        deck.push({ ...CARD_TYPES.DETECTIVE, instanceId: Math.random() });
+        deck.push({ ...CARD_TYPES.ALIBI, instanceId: Math.random() });
+        deck.push({ ...CARD_TYPES.SCHEME, instanceId: Math.random() });
+        
+        const fillerTypes = [CARD_TYPES.CITIZEN, CARD_TYPES.RUMOR, CARD_TYPES.INFORMATION, CARD_TYPES.TRADE, CARD_TYPES.DOG, CARD_TYPES.BOY, CARD_TYPES.DETECTIVE, CARD_TYPES.ALIBI];
+        
+        const totalCardsNeeded = count * 4;
+        while (deck.length < totalCardsNeeded) {
+          const randType = fillerTypes[Math.floor(Math.random() * fillerTypes.length)];
+          deck.push({ ...randType, instanceId: Math.random() });
+        }
+
+        for (let i = deck.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [deck[i], deck[j]] = [deck[j], deck[i]];
+        }
+
+        const newPlayers = [];
+        let starterIdx = 0;
+
+        for (let p = 0; p < count; p++) {
+          const hand = deck.slice(p * 4, (p + 1) * 4);
+          const isAI = mode === 'ai' && p > 0;
+          const name = p === 0 ? 'あなた (プレイヤー1)' : isAI ? `ボット ${p}` : `プレイヤー ${p + 1}`;
+          
+          if (hand.some(c => c.id === 'first_discoverer')) {
+            starterIdx = p;
+          }
+
+          newPlayers.push({
+            id: p,
+            name,
+            isAI,
+            hand,
+            playedCards: []
+          });
+        }
+
+        setPlayers(newPlayers);
+        setTurnIndex(starterIdx);
+        setGameStage('playing');
+        setWinner(null);
+        setLogs([`🎮 ゲームが開始されました！【第一発見者】を持つ ${newPlayers[starterIdx].name} からスタートです。`]);
+
+        if (newPlayers[starterIdx].isAI) {
+          setTimeout(() => handleAIPlay(starterIdx, newPlayers), 1200);
+        }
+      };
+
+      const handlePlayCard = (playerIdx, cardIdx, extraData = {}) => {
+        if (gameStage !== 'playing') return;
+        const currentPlayer = players[playerIdx];
+        const card = currentPlayer.hand[cardIdx];
+
+        if (logs.length <= 1 && card.id !== 'first_discoverer' && currentPlayer.hand.some(c => c.id === 'first_discoverer')) {
+          alert('最初のターンは【第一発見者】を出さなければなりません！');
+          return;
+        }
+
+        addLog(`📢 ${currentPlayer.name} が【${card.name}】を出しました。`);
+
+        const newHand = [...currentPlayer.hand];
+        newHand.splice(cardIdx, 1);
+        
+        let nextPlayers = [...players];
+        nextPlayers[playerIdx] = {
+          ...currentPlayer,
+          hand: newHand,
+          playedCards: [...currentPlayer.playedCards, card]
+        };
+
+        setPlayers(nextPlayers);
+        setSelectedCardIndex(null);
+
+        executeCardLogic(card, playerIdx, nextPlayers, extraData);
+      };
+
+      const executeCardLogic = (card, playerIdx, currentPlayers, extraData) => {
+        const actor = currentPlayers[playerIdx];
+
+        switch (card.id) {
+          case 'first_discoverer':
+            addLog(`🔍 事件発生！${actor.name}が遺体を発見しました。`);
+            advanceTurn(currentPlayers);
+            break;
+
+          case 'criminal':
+            triggerVictory('criminal', playerIdx, currentPlayers);
+            break;
+
+          case 'detective':
+            if (extraData.targetId !== undefined) {
+              const target = currentPlayers[extraData.targetId];
+              addLog(`🕵️ ${actor.name} が ${target.name} に「あなたが犯人ですか？」と追及！`);
+              
+              const targetHasCriminal = target.hand.some(c => c.id === 'criminal');
+              const targetHasAlibi = target.hand.some(c => c.id === 'alibi');
+
+              if (targetHasCriminal && !targetHasAlibi) {
+                addLog(`🎯 ${target.name} 「申し訳ありません…私が犯人です！」`);
+                triggerVictory('detective', playerIdx, currentPlayers);
+              } else {
+                if (targetHasCriminal && targetHasAlibi) {
+                  addLog(`🛡️ ${target.name} 「アリバイがあります！犯人ではありません。」（アリバイで回避！）`);
+                } else {
+                  addLog(`❌ ${target.name} 「犯人ではありません！」`);
+                }
+                advanceTurn(currentPlayers);
+              }
+            } else if (!actor.isAI) {
+              setPendingAction({ type: 'detective', playerIdx, currentPlayers });
+            }
+            break;
+
+          case 'dog':
+            if (extraData.targetId !== undefined && extraData.cardIndex !== undefined) {
+              const target = currentPlayers[extraData.targetId];
+              const stolenCard = target.hand[extraData.cardIndex];
+              addLog(`🐕 ${actor.name} の「いぬ」が ${target.name} の手札から【${stolenCard.name}】を引き抜いた！`);
+
+              const updatedTargetHand = [...target.hand];
+              updatedTargetHand.splice(extraData.cardIndex, 1);
+              const updatedActorHand = [...currentPlayers[playerIdx].hand, stolenCard];
+
+              currentPlayers[extraData.targetId].hand = updatedTargetHand;
+              currentPlayers[playerIdx].hand = updatedActorHand;
+
+              if (stolenCard.id === 'criminal') {
+                addLog(`🎉 「いぬ」が犯人を見事にクンクン当てました！`);
+                triggerVictory('dog', playerIdx, currentPlayers);
+              } else {
+                advanceTurn(currentPlayers);
+              }
+            } else if (!actor.isAI) {
+              setPendingAction({ type: 'dog', playerIdx, currentPlayers });
+            }
+            break;
+
+          case 'boy':
+            const criminalPlayer = currentPlayers.find(p => p.hand.some(c => c.id === 'criminal'));
+            if (criminalPlayer) {
+              addLog(`👁️ 「少年」が目撃した！犯人は… ${criminalPlayer.name} だ！（非公開情報）`);
+            } else {
+              addLog(`👁️ 「少年」は誰も目撃できなかった…`);
+            }
+            advanceTurn(currentPlayers);
+            break;
+
+          case 'trade':
+            if (extraData.targetId !== undefined) {
+              const target = currentPlayers[extraData.targetId];
+              addLog(`🤝 ${actor.name} と ${target.name} が手札を交換しました。`);
+              advanceTurn(currentPlayers);
+            } else if (!actor.isAI) {
+              setPendingAction({ type: 'trade', playerIdx, currentPlayers });
+            }
+            break;
+
+          default:
+            advanceTurn(currentPlayers);
+            break;
+        }
+      };
+
+      const advanceTurn = (currentPlayers) => {
+        let nextIdx = (turnIndex + 1) % playerCount;
+        let checkCount = 0;
+        while (currentPlayers[nextIdx].hand.length === 0 && checkCount < playerCount) {
+          nextIdx = (nextIdx + 1) % playerCount;
+          checkCount++;
+        }
+
+        if (checkCount >= playerCount) {
+          addLog(`⚠️ 全員の手札がなくなりました！引き分けです。`);
+          setGameStage('ended');
+          return;
+        }
+
+        setTurnIndex(nextIdx);
+
+        if (currentPlayers[nextIdx].isAI) {
+          setTimeout(() => handleAIPlay(nextIdx, currentPlayers), 1500);
+        }
+      };
+
+      const handleAIPlay = (aiIdx, currentPlayers) => {
+        const aiPlayer = currentPlayers[aiIdx];
+        if (aiPlayer.hand.length === 0) {
+          advanceTurn(currentPlayers);
+          return;
+        }
+
+        let chosenCardIdx = 0;
+        const fdIdx = aiPlayer.hand.findIndex(c => c.id === 'first_discoverer');
+        if (fdIdx !== -1) {
+          chosenCardIdx = fdIdx;
+        } else {
+          const nonCriminalIdxs = aiPlayer.hand.map((c, i) => c.id !== 'criminal' ? i : -1).filter(i => i !== -1);
+          if (nonCriminalIdxs.length > 0) {
+            chosenCardIdx = nonCriminalIdxs[Math.floor(Math.random() * nonCriminalIdxs.length)];
+          }
+        }
+
+        const chosenCard = aiPlayer.hand[chosenCardIdx];
+        let extraData = {};
+        const otherPlayerIds = currentPlayers.filter(p => p.id !== aiIdx && p.hand.length > 0).map(p => p.id);
+        const randomTargetId = otherPlayerIds.length > 0 ? otherPlayerIds[Math.floor(Math.random() * otherPlayerIds.length)] : 0;
+
+        if (chosenCard.id === 'detective' || chosenCard.id === 'trade') {
+          extraData.targetId = randomTargetId;
+        } else if (chosenCard.id === 'dog') {
+          extraData.targetId = randomTargetId;
+          const targetHandLen = currentPlayers[randomTargetId].hand.length;
+          extraData.cardIndex = targetHandLen > 0 ? Math.floor(Math.random() * targetHandLen) : 0;
+        }
+
+        handlePlayCard(aiIdx, chosenCardIdx, extraData);
+      };
+
+      const triggerVictory = (victoryType, mainWinnerIdx, currentPlayers) => {
+        setGameStage('ended');
+        let winners = [mainWinnerIdx];
+        
+        if (victoryType === 'criminal') {
+          currentPlayers.forEach(p => {
+            if (p.hand.some(c => c.id === 'scheme') || p.playedCards.some(c => c.id === 'scheme')) {
+              if (!winners.includes(p.id)) winners.push(p.id);
+            }
+          });
+          addLog(`🏆 犯人側の完全勝利！`);
+        } else if (victoryType === 'detective') {
+          addLog(`🎉 探偵の勝利！`);
+        } else if (victoryType === 'dog') {
+          addLog(`🐶 いぬの勝利！`);
+        }
+
+        setWinner({
+          type: victoryType,
+          winnerNames: winners.map(id => currentPlayers[id].name).join(', ')
+        });
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col justify-between max-w-5xl mx-auto px-4 py-6">
+          <header className="flex justify-between items-center border-b border-slate-700 pb-4 mb-4">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">🕵️‍♂️</span>
+              <div>
+                <h1 className="text-2xl font-black text-rose-500">犯人は踊る</h1>
+                <p className="text-xs text-slate-400">Web Edition</p>
+              </div>
+            </div>
+            <button onClick={() => setShowRules(true)} className="bg-slate-800 text-slate-200 px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 border border-slate-600">
+              <i className="fa-solid fa-book-open text-amber-400"></i> ルール
+            </button>
+          </header>
+
+          {gameStage === 'menu' && (
+            <div className="my-auto py-12 flex flex-col items-center text-center">
+              <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-xl mb-6">
+                <label className="block text-slate-300 font-bold mb-2 text-sm text-left">人数選択:</label>
+                <div className="grid grid-cols-3 gap-2 mb-6">
+                  {[3, 4, 5].map(n => (
+                    <button key={n} onClick={() => setPlayerCount(n)} className={`py-2 rounded-xl font-bold border ${playerCount === n ? 'bg-rose-600 text-white' : 'bg-slate-700 text-slate-300'}`}>
+                      {n} 人
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => startGame('ai', playerCount)} className="w-full bg-rose-600 text-white font-bold py-3.5 rounded-xl shadow mb-3 flex justify-center items-center gap-2">
+                  <i className="fa-solid fa-robot"></i> VS AI ボットと遊ぶ
+                </button>
+                <button onClick={() => startGame('local', playerCount)} className="w-full bg-slate-700 text-white font-bold py-3.5 rounded-xl border border-slate-500 flex justify-center items-center gap-2">
+                  <i className="fa-solid fa-users"></i> パス＆プレイ (回しプレイ)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {gameStage === 'playing' && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 my-auto">
+              <div className="md:col-span-2 space-y-4">
+                <div className="bg-slate-800 border border-slate-700 rounded-xl p-3 flex justify-between items-center">
+                  <span className="font-bold text-rose-400">手番: {players[turnIndex]?.name}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {players.map((p, idx) => (
+                    <div key={p.id} className={`rounded-xl p-3 border ${turnIndex === idx ? 'bg-rose-950/40 border-rose-500' : 'bg-slate-800/50 border-slate-700'}`}>
+                      <div className="font-bold text-sm">{p.name} (手札: {p.hand.length}枚)</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-slate-800 border border-slate-700 rounded-2xl p-4">
+                  <h3 className="font-bold text-sm text-slate-300 mb-3">{players[turnIndex]?.name} の手札</h3>
+                  {!players[turnIndex]?.isAI ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {players[turnIndex]?.hand.map((card, cIdx) => (
+                        <div key={card.instanceId} className={`rounded-xl p-3 bg-gradient-to-br ${card.color} border border-white/20 flex flex-col justify-between h-36`}>
+                          <div>
+                            <span className="font-black text-white text-sm">{card.name}</span>
+                            <p className="text-[10px] text-white/90 leading-tight mt-1">{card.desc}</p>
+                          </div>
+                          <button onClick={() => handlePlayCard(turnIndex, cIdx)} className="w-full mt-2 bg-white/20 text-white font-bold text-xs py-1 rounded">
+                            出す
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="h-36 flex items-center justify-center text-slate-500 text-xs">AI思考中...</div>
+                  )}
+                </div>
+              </div>
+              <div className="bg-slate-800 border border-slate-700 rounded-2xl p-4 flex flex-col h-[400px]">
+                <h3 className="font-bold text-xs text-slate-400 mb-3">進行ログ</h3>
+                <div className="flex-1 overflow-y-auto space-y-2 text-xs">
+                  {logs.map(log => (
+                    <div key={log.id} className="bg-slate-900 p-2 rounded text-slate-200">{log.text}</div>
+                  ))}
+                  <div ref={logEndRef} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {gameStage === 'ended' && winner && (
+            <div className="my-auto py-12 flex flex-col items-center text-center">
+              <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 max-w-md w-full">
+                <h2 className="text-2xl font-black text-rose-400 mb-2">ゲーム終了！</h2>
+                <p className="text-slate-300 text-sm mb-6">勝者: <span className="font-bold text-amber-400">{winner.winnerNames}</span></p>
+                <button onClick={() => startGame(gameMode, playerCount)} className="w-full bg-rose-600 text-white font-bold py-3 rounded-xl">
+                  もう一度遊ぶ
+                </button>
+              </div>
+            </div>
+          )}
+
+          {pendingAction && (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+              <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full">
+                <h3 className="font-bold text-lg mb-3">対象を選択してください</h3>
+                <div className="space-y-2">
+                  {players.filter(p => p.id !== pendingAction.playerIdx && p.hand.length > 0).map(p => (
+                    <button key={p.id} onClick={() => handlePlayCard(pendingAction.playerIdx, players[pendingAction.playerIdx].hand.findIndex(c => c.id === pendingAction.type), { targetId: p.id })} className="w-full bg-slate-700 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-xl text-sm">
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showRules && (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+              <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-lg w-full max-h-[80vh] flex flex-col">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-lg text-amber-400">ルール解説</h3>
+                  <button onClick={() => setShowRules(false)} className="text-slate-400">✕</button>
+                </div>
+                <div className="overflow-y-auto space-y-3 text-xs pr-2">
+                  {Object.values(CARD_TYPES).map(c => (
+                    <div key={c.id} className="bg-slate-900 p-3 rounded-lg border border-slate-700">
+                      <div className="font-bold text-slate-200 mb-1">{c.name}</div>
+                      <p className="text-slate-400">{c.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
