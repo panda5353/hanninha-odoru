@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る ver 1.6 - オンライン対戦</title>
+  <title>犯人は踊る ver 1.7 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -220,8 +220,11 @@
       const [pendingTargetCard, setPendingTargetCard] = useState(null);
       const [showRules, setShowRules] = useState(false);
       const [showLogsModal, setShowLogsModal] = useState(false);
-      const [privateNotice, setPrivateNotice] = useState(null); // 自分だけの情報通知
       
+      // 自分専用通知ステート（少年・うわさなど）
+      const [privateNotice, setPrivateNotice] = useState(null); 
+      const [rumorResultNotice, setRumorResultNotice] = useState(null); // うわさ結果専用
+
       // 個別アクション用ステート
       const [tradeState, setTradeState] = useState(null); // 取り引き進行用
       const [infoState, setInfoState] = useState(null);   // 情報操作選択用
@@ -384,6 +387,8 @@
           }
         } else if (data.type === 'PRIVATE_NOTICE') {
           setPrivateNotice(data.message);
+        } else if (data.type === 'RUMOR_NOTICE') {
+          setRumorResultNotice(data.notice);
         }
       };
 
@@ -568,20 +573,49 @@
             const pCount = currentPlayers.length;
             const stolenList = [];
 
+            // 各自が右隣から引き抜く
             for (let i = 0; i < pCount; i++) {
               const rightIdx = (i + 1) % pCount;
               const rightHand = currentPlayers[rightIdx].hand;
               if (rightHand.length > 0) {
                 const randIdx = Math.floor(Math.random() * rightHand.length);
-                stolenList.push({ fromIdx: rightIdx, toIdx: i, card: rightHand[randIdx] });
+                stolenList.push({ 
+                  fromIdx: rightIdx, 
+                  fromPlayer: currentPlayers[rightIdx],
+                  toIdx: i, 
+                  toPlayer: currentPlayers[i],
+                  card: rightHand[randIdx] 
+                });
               }
             }
+
+            // 手札データから削除
             stolenList.forEach(item => {
               const idx = currentPlayers[item.fromIdx].hand.findIndex(c => c.instanceId === item.card.instanceId);
               if (idx !== -1) currentPlayers[item.fromIdx].hand.splice(idx, 1);
             });
+            // 手札データへ追加
             stolenList.forEach(item => {
               currentPlayers[item.toIdx].hand.push(item.card);
+            });
+
+            // 各自に「獲得」と「消失」の結果通知を個別に作成して送信
+            currentPlayers.forEach((p, idx) => {
+              const gained = stolenList.find(s => s.toIdx === idx);
+              const lost = stolenList.find(s => s.fromIdx === idx);
+
+              const noticeData = {
+                gainedCard: gained ? gained.card : null,
+                gainedFrom: gained ? gained.fromPlayer.name : null,
+                lostCard: lost ? lost.card : null,
+                lostTo: lost ? lost.toPlayer.name : null
+              };
+
+              if (p.id === myId) {
+                setRumorResultNotice(noticeData);
+              } else {
+                sendToClient(p.id, { type: 'RUMOR_NOTICE', notice: noticeData });
+              }
             });
             break;
 
@@ -647,7 +681,6 @@
         if (senderId === nextTrade.fromId) nextTrade.fromCard = cardInstanceId;
         if (senderId === nextTrade.toId) nextTrade.toCard = cardInstanceId;
 
-        // 両者選択完了で交わす
         if (nextTrade.fromCard && nextTrade.toCard) {
           const currentPlayers = JSON.parse(JSON.stringify(curState.players));
           const p1 = currentPlayers.find(p => p.id === nextTrade.fromId);
@@ -709,7 +742,6 @@
         let nextInfo = { selections: { ...curState.infoState.selections, [senderId]: cardInstanceId } };
         const activePlayers = curState.players.filter(p => p.hand && p.hand.length > 0);
 
-        // 全員選択完了で左隣へ移動
         if (Object.keys(nextInfo.selections).length >= activePlayers.length) {
           const currentPlayers = JSON.parse(JSON.stringify(curState.players));
           const pCount = currentPlayers.length;
@@ -800,7 +832,7 @@
                 <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
                   犯人は踊る
                   <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
-                    ver 1.6
+                    ver 1.7
                   </span>
                 </h1>
                 <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
@@ -1087,6 +1119,61 @@
               >
                 <i className="fa-solid fa-list-ul text-rose-600"></i> 📜 ログを見る
               </button>
+            </div>
+          )}
+
+          {/* 【うわさ】結果の一時中央ポップアップ (自分専用) */}
+          {rumorResultNotice && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-sm w-full pop-shadow text-slate-900 text-center animate-pop-card">
+                <div className="text-4xl mb-1">🗣️</div>
+                <h3 className="font-black text-lg mb-3">【うわさ】カード交換結果</h3>
+
+                <div className="space-y-3 mb-6">
+                  {rumorResultNotice.gainedCard ? (
+                    <div className="bg-emerald-100 border-2 border-emerald-800 p-3 rounded-2xl text-left shadow-sm">
+                      <span className="text-[10px] font-black bg-emerald-700 text-white px-2 py-0.5 rounded">
+                        獲得したカード
+                      </span>
+                      <div className="font-black text-sm text-emerald-950 mt-1">
+                        【{rumorResultNotice.gainedCard.name}】
+                      </div>
+                      <div className="text-[10px] font-bold text-emerald-800">
+                        引いた相手: {rumorResultNotice.gainedFrom}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-200 border-2 border-slate-400 p-2 rounded-xl text-xs font-bold text-slate-600">
+                      獲得したカードはありません
+                    </div>
+                  )}
+
+                  {rumorResultNotice.lostCard ? (
+                    <div className="bg-rose-100 border-2 border-rose-800 p-3 rounded-2xl text-left shadow-sm">
+                      <span className="text-[10px] font-black bg-rose-700 text-white px-2 py-0.5 rounded">
+                        失ったカード
+                      </span>
+                      <div className="font-black text-sm text-rose-950 mt-1">
+                        【{rumorResultNotice.lostCard.name}】
+                      </div>
+                      <div className="text-[10px] font-bold text-rose-800">
+                        取られた相手: {rumorResultNotice.lostTo}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-200 border-2 border-slate-400 p-2 rounded-xl text-xs font-bold text-slate-600">
+                      失ったカードはありません
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setRumorResultNotice(null)}
+                  className="w-full bg-rose-500 hover:bg-rose-400 text-white font-black py-3 rounded-2xl border-3 border-slate-900 pop-button text-sm"
+                >
+                  確認しました (閉じる)
+                </button>
+              </div>
             </div>
           )}
 
