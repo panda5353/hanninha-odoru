@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る ver 1.5 - オンライン対戦</title>
+  <title>犯人は踊る ver 1.6 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -77,17 +77,13 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // --- Web Audio API によるサウンドシステム ---
+    // --- Web Audio API サウンド ---
     let audioCtx = null;
     let bgmInterval = null;
 
     const getAudioContext = () => {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
       return audioCtx;
     };
 
@@ -219,33 +215,36 @@
       const [playedStack, setPlayedStack] = useState([]);
       const [logs, setLogs] = useState([]);
       const [winner, setWinner] = useState(null);
+      
+      // モーダル・一時通知用ステート
       const [pendingTargetCard, setPendingTargetCard] = useState(null);
       const [showRules, setShowRules] = useState(false);
-      const logEndRef = useRef(null);
+      const [showLogsModal, setShowLogsModal] = useState(false);
+      const [privateNotice, setPrivateNotice] = useState(null); // 自分だけの情報通知
+      
+      // 個別アクション用ステート
+      const [tradeState, setTradeState] = useState(null); // 取り引き進行用
+      const [infoState, setInfoState] = useState(null);   // 情報操作選択用
 
+      const logEndRef = useRef(null);
       const peerRef = useRef(null);
       const connectionsRef = useRef([]);
 
-      const stateRef = useRef({ players: [], turnIndex: 0, playedStack: [], logs: [] });
+      const stateRef = useRef({ players: [], turnIndex: 0, playedStack: [], logs: [], tradeState: null, infoState: null });
       useEffect(() => {
-        stateRef.current = { players, turnIndex, playedStack, logs };
-      }, [players, turnIndex, playedStack, logs]);
+        stateRef.current = { players, turnIndex, playedStack, logs, tradeState, infoState };
+      }, [players, turnIndex, playedStack, logs, tradeState, infoState]);
 
       useEffect(() => {
-        if (logEndRef.current) {
+        if (logEndRef.current && showLogsModal) {
           logEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-      }, [logs]);
+      }, [logs, showLogsModal]);
 
       const toggleBGM = () => {
         getAudioContext();
-        if (isBgmOn) {
-          stopBGM();
-          setIsBgmOn(false);
-        } else {
-          startBGM();
-          setIsBgmOn(true);
-        }
+        if (isBgmOn) { stopBGM(); setIsBgmOn(false); }
+        else { startBGM(); setIsBgmOn(true); }
       };
 
       const generate3DigitCode = () => Math.floor(100 + Math.random() * 900).toString();
@@ -279,11 +278,8 @@
 
         peer.on('error', (err) => {
           setStatusText('');
-          if (err.type === 'unavailable-id') {
-            handleCreateRoom();
-          } else {
-            alert('接続エラーが発生しました。時間を置いて再度お試しください。');
-          }
+          if (err.type === 'unavailable-id') handleCreateRoom();
+          else alert('接続エラーが発生しました。時間を置いて再度お試しください。');
         });
       };
 
@@ -335,6 +331,11 @@
         });
       };
 
+      const sendToClient = (targetId, data) => {
+        const conn = connectionsRef.current.find(c => c.peer === targetId);
+        if (conn && conn.open) conn.send(data);
+      };
+
       const handleHostReceiveData = (data, conn) => {
         if (data.type === 'JOIN') {
           const currentPlayers = stateRef.current.players;
@@ -345,6 +346,10 @@
           }
         } else if (data.type === 'PLAY_CARD') {
           processCardPlay(data.playerIdx, data.cardIdx, data.targetId);
+        } else if (data.type === 'SUBMIT_TRADE_CARD') {
+          handleTradeCardSubmit(data.senderId, data.cardInstanceId);
+        } else if (data.type === 'SUBMIT_INFO_CARD') {
+          handleInfoCardSubmit(data.senderId, data.cardInstanceId);
         }
       };
 
@@ -363,16 +368,22 @@
           setTurnIndex(data.turnIndex);
           setPlayedStack(data.playedStack || []);
           setLogs(data.logs);
-          if (data.soundEffect) {
-            if (SOUNDS[data.soundEffect]) SOUNDS[data.soundEffect]();
+          setTradeState(data.tradeState || null);
+          setInfoState(data.infoState || null);
+
+          if (data.soundEffect && SOUNDS[data.soundEffect]) {
+            SOUNDS[data.soundEffect]();
           } else {
             SOUNDS.playCard();
           }
+
           if (data.winner) {
             setWinner(data.winner);
             setScreen('result');
             SOUNDS.win();
           }
+        } else if (data.type === 'PRIVATE_NOTICE') {
+          setPrivateNotice(data.message);
         }
       };
 
@@ -469,6 +480,8 @@
 
         const newPlayedStack = [...curState.playedStack, { card, playedBy: currentPlayer.name }];
         let gameWinner = null;
+        let nextTradeState = null;
+        let nextInfoState = null;
 
         switch (card.id) {
           case 'first_discoverer':
@@ -511,7 +524,7 @@
                 target.hand.splice(stolenIdx, 1);
                 currentPlayer.hand.push(stolen);
 
-                newLogs.push(`🐕 ${currentPlayer.name} の「いぬ」が ${target.name} から【${stolen.name}】を引き抜いた！`);
+                newLogs.push(`🐕 ${currentPlayer.name} の「いぬ」が ${target.name} からカードを1枚引き抜いた！`);
 
                 if (stolen.id === 'criminal') {
                   newLogs.push(`🎉 「いぬ」が犯人カードをクンクン当てました！`);
@@ -523,50 +536,50 @@
 
           case 'boy':
             const crim = currentPlayers.find(p => p.hand.some(c => c.id === 'criminal'));
-            newLogs.push(crim ? `👁️ 「少年」が目撃した！犯人は… ${crim.name} だ！（非公開情報）` : `👁️ 「少年」は何も目撃できなかった…`);
+            newLogs.push(`👁️ ${currentPlayer.name} は「少年」の目撃情報を入手した！`);
+            const boyMessage = crim 
+              ? `👁️【目撃情報】犯人カードを持っているのは [ ${crim.name} ] です！`
+              : `👁️【目撃情報】犯人カードを持っている人はいません。`;
+            
+            if (currentPlayer.id === myId) {
+              setPrivateNotice(boyMessage);
+            } else {
+              sendToClient(currentPlayer.id, { type: 'PRIVATE_NOTICE', message: boyMessage });
+            }
             break;
 
           case 'trade':
             soundEffect = 'swapCard';
             if (targetId) {
               const target = currentPlayers.find(p => p.id === targetId);
-              if (currentPlayer.hand.length > 0 && target.hand.length > 0) {
-                // アクターとターゲットの手札末尾を交換
-                const actorCard = currentPlayer.hand.pop();
-                const targetCard = target.hand.pop();
-                currentPlayer.hand.push(targetCard);
-                target.hand.push(actorCard);
-                newLogs.push(`🤝 ${currentPlayer.name} と ${target.name} がカードを1枚交換しました。`);
-              }
+              newLogs.push(`🤝 ${currentPlayer.name} が ${target.name} との「取り引き」を開始しました。`);
+              nextTradeState = {
+                fromId: currentPlayer.id,
+                toId: target.id,
+                fromCard: null,
+                toCard: null
+              };
             }
             break;
 
           case 'rumor':
             soundEffect = 'swapCard';
-            newLogs.push(`🗣️ うわすが流れた！全員が右隣の人の手札から1枚引き抜きます。`);
+            newLogs.push(`🗣️ うわすが流れた！全員が右隣の人の手札からランダムに1枚引き抜きます。`);
             const pCount = currentPlayers.length;
             const stolenList = [];
 
-            // 各自が右隣から引き抜くカードを事前選定
             for (let i = 0; i < pCount; i++) {
               const rightIdx = (i + 1) % pCount;
               const rightHand = currentPlayers[rightIdx].hand;
               if (rightHand.length > 0) {
                 const randIdx = Math.floor(Math.random() * rightHand.length);
-                stolenList.push({
-                  fromIdx: rightIdx,
-                  toIdx: i,
-                  card: rightHand[randIdx],
-                  randIdx
-                });
+                stolenList.push({ fromIdx: rightIdx, toIdx: i, card: rightHand[randIdx] });
               }
             }
-            // 削除
             stolenList.forEach(item => {
               const idx = currentPlayers[item.fromIdx].hand.findIndex(c => c.instanceId === item.card.instanceId);
               if (idx !== -1) currentPlayers[item.fromIdx].hand.splice(idx, 1);
             });
-            // 追加
             stolenList.forEach(item => {
               currentPlayers[item.toIdx].hand.push(item.card);
             });
@@ -574,31 +587,8 @@
 
           case 'information':
             soundEffect = 'swapCard';
-            newLogs.push(`🔄 情報操作！全員が左隣の人にカードを1枚ずつ渡しました。`);
-            const countP = currentPlayers.length;
-            const passList = [];
-
-            // 各自が左隣に渡すカードを選定（各手札の最初の1枚）
-            for (let i = 0; i < countP; i++) {
-              const leftIdx = (i - 1 + countP) % countP;
-              const pHand = currentPlayers[i].hand;
-              if (pHand.length > 0) {
-                passList.push({
-                  fromIdx: i,
-                  toIdx: leftIdx,
-                  card: pHand[0]
-                });
-              }
-            }
-            // 削除
-            passList.forEach(item => {
-              const idx = currentPlayers[item.fromIdx].hand.findIndex(c => c.instanceId === item.card.instanceId);
-              if (idx !== -1) currentPlayers[item.fromIdx].hand.splice(idx, 1);
-            });
-            // 追加
-            passList.forEach(item => {
-              currentPlayers[item.toIdx].hand.push(item.card);
-            });
+            newLogs.push(`🔄 情報操作！全員が左隣の人に渡すカードを選んでいます...`);
+            nextInfoState = { selections: {} };
             break;
 
           default:
@@ -616,6 +606,8 @@
         setTurnIndex(nextTurn);
         setPlayedStack(newPlayedStack);
         setLogs(newLogs);
+        setTradeState(nextTradeState);
+        setInfoState(nextInfoState);
 
         if (SOUNDS[soundEffect]) SOUNDS[soundEffect]();
 
@@ -631,9 +623,143 @@
           turnIndex: nextTurn,
           playedStack: newPlayedStack,
           logs: newLogs,
+          tradeState: nextTradeState,
+          infoState: nextInfoState,
           soundEffect,
           winner: gameWinner
         });
+      };
+
+      // --- 【取り引き】カード提出処理 ---
+      const submitTradeCardChoice = (cardInstanceId) => {
+        if (!isHost) {
+          connectionsRef.current[0].send({ type: 'SUBMIT_TRADE_CARD', senderId: myId, cardInstanceId });
+          return;
+        }
+        handleTradeCardSubmit(myId, cardInstanceId);
+      };
+
+      const handleTradeCardSubmit = (senderId, cardInstanceId) => {
+        const curState = stateRef.current;
+        if (!curState.tradeState) return;
+
+        let nextTrade = { ...curState.tradeState };
+        if (senderId === nextTrade.fromId) nextTrade.fromCard = cardInstanceId;
+        if (senderId === nextTrade.toId) nextTrade.toCard = cardInstanceId;
+
+        // 両者選択完了で交わす
+        if (nextTrade.fromCard && nextTrade.toCard) {
+          const currentPlayers = JSON.parse(JSON.stringify(curState.players));
+          const p1 = currentPlayers.find(p => p.id === nextTrade.fromId);
+          const p2 = currentPlayers.find(p => p.id === nextTrade.toId);
+
+          const c1Idx = p1.hand.findIndex(c => c.instanceId === nextTrade.fromCard);
+          const c2Idx = p2.hand.findIndex(c => c.instanceId === nextTrade.toCard);
+
+          if (c1Idx !== -1 && c2Idx !== -1) {
+            const card1 = p1.hand.splice(c1Idx, 1)[0];
+            const card2 = p2.hand.splice(c2Idx, 1)[0];
+            p1.hand.push(card2);
+            p2.hand.push(card1);
+          }
+
+          const newLogs = [...curState.logs, `🤝 ${p1.name} と ${p2.name} の取り引きが完了しました！`];
+
+          setPlayers(currentPlayers);
+          setLogs(newLogs);
+          setTradeState(null);
+
+          broadcast({
+            type: 'UPDATE_STATE',
+            players: currentPlayers,
+            turnIndex: curState.turnIndex,
+            playedStack: curState.playedStack,
+            logs: newLogs,
+            tradeState: null,
+            infoState: null,
+            soundEffect: 'swapCard'
+          });
+        } else {
+          setTradeState(nextTrade);
+          broadcast({
+            type: 'UPDATE_STATE',
+            players: curState.players,
+            turnIndex: curState.turnIndex,
+            playedStack: curState.playedStack,
+            logs: curState.logs,
+            tradeState: nextTrade,
+            infoState: null
+          });
+        }
+      };
+
+      // --- 【情報操作】カード選択処理 ---
+      const submitInfoCardChoice = (cardInstanceId) => {
+        if (!isHost) {
+          connectionsRef.current[0].send({ type: 'SUBMIT_INFO_CARD', senderId: myId, cardInstanceId });
+          return;
+        }
+        handleInfoCardSubmit(myId, cardInstanceId);
+      };
+
+      const handleInfoCardSubmit = (senderId, cardInstanceId) => {
+        const curState = stateRef.current;
+        if (!curState.infoState) return;
+
+        let nextInfo = { selections: { ...curState.infoState.selections, [senderId]: cardInstanceId } };
+        const activePlayers = curState.players.filter(p => p.hand && p.hand.length > 0);
+
+        // 全員選択完了で左隣へ移動
+        if (Object.keys(nextInfo.selections).length >= activePlayers.length) {
+          const currentPlayers = JSON.parse(JSON.stringify(curState.players));
+          const pCount = currentPlayers.length;
+          const passedList = [];
+
+          for (let i = 0; i < pCount; i++) {
+            const p = currentPlayers[i];
+            const selectedInstId = nextInfo.selections[p.id];
+            if (selectedInstId) {
+              const leftIdx = (i - 1 + pCount) % pCount;
+              const cardIdx = p.hand.findIndex(c => c.instanceId === selectedInstId);
+              if (cardIdx !== -1) {
+                const card = p.hand.splice(cardIdx, 1)[0];
+                passedList.push({ toIdx: leftIdx, card });
+              }
+            }
+          }
+
+          passedList.forEach(item => {
+            currentPlayers[item.toIdx].hand.push(item.card);
+          });
+
+          const newLogs = [...curState.logs, `🔄 情報操作が完了！全員の手札が左隣に移動しました。`];
+
+          setPlayers(currentPlayers);
+          setLogs(newLogs);
+          setInfoState(null);
+
+          broadcast({
+            type: 'UPDATE_STATE',
+            players: currentPlayers,
+            turnIndex: curState.turnIndex,
+            playedStack: curState.playedStack,
+            logs: newLogs,
+            tradeState: null,
+            infoState: null,
+            soundEffect: 'swapCard'
+          });
+        } else {
+          setInfoState(nextInfo);
+          broadcast({
+            type: 'UPDATE_STATE',
+            players: curState.players,
+            turnIndex: curState.turnIndex,
+            playedStack: curState.playedStack,
+            logs: curState.logs,
+            tradeState: null,
+            infoState: nextInfo
+          });
+        }
       };
 
       const calculateWinner = (type, winnerIdx, currentPlayers) => {
@@ -660,9 +786,10 @@
 
       const orderedPlayers = getOrderedPlayersForTable();
       const lastPlayed = playedStack.length > 0 ? playedStack[playedStack.length - 1] : null;
+      const myPlayer = players.find(p => p.id === myId);
 
       return (
-        <div className="min-h-screen flex flex-col justify-between max-w-6xl mx-auto px-3 py-3 select-none">
+        <div className="min-h-screen flex flex-col justify-between max-w-6xl mx-auto px-3 py-3 select-none relative">
           {/* HEADER */}
           <header className="flex justify-between items-center bg-amber-400 border-4 border-slate-900 rounded-2xl p-2.5 pop-shadow mb-3">
             <div className="flex items-center gap-2">
@@ -673,7 +800,7 @@
                 <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
                   犯人は踊る
                   <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
-                    ver 1.5
+                    ver 1.6
                   </span>
                 </h1>
                 <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
@@ -822,10 +949,10 @@
 
           {/* MAIN CARD TABLE GAME SCREEN */}
           {screen === 'game' && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 my-auto">
-              
-              <div className="md:col-span-3 felt-table rounded-3xl p-4 flex flex-col justify-between min-h-[560px] relative overflow-hidden">
+            <div className="my-auto relative">
+              <div className="felt-table rounded-3xl p-4 flex flex-col justify-between min-h-[580px] relative overflow-hidden">
                 
+                {/* 1. 他プレイヤー配置 */}
                 <div className="flex justify-around items-center w-full z-10 pt-2">
                   {orderedPlayers.slice(1).map(p => {
                     const isTurn = players[turnIndex]?.id === p.id;
@@ -858,6 +985,7 @@
                   })}
                 </div>
 
+                {/* 2. 中央エリア */}
                 <div className="my-auto flex flex-col items-center justify-center z-10">
                   <span className="text-[11px] font-black bg-slate-900/80 text-amber-300 px-3 py-1 rounded-full border border-amber-400/40 mb-2">
                     中央の場 (出したカード)
@@ -897,10 +1025,11 @@
                   )}
                 </div>
 
+                {/* 3. 自手札エリア */}
                 <div className="bg-slate-950/90 border-3 border-amber-400 rounded-3xl p-3 z-10 shadow-2xl">
                   <div className="flex justify-between items-center mb-2 px-1">
                     <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
-                      <i className="fa-solid fa-hand text-rose-400"></i> あなたの手札 ({players.find(p => p.id === myId)?.hand.length || 0}枚)
+                      <i className="fa-solid fa-hand text-rose-400"></i> あなたの手札 ({myPlayer?.hand.length || 0}枚)
                     </span>
 
                     {players[turnIndex]?.id === myId ? (
@@ -915,7 +1044,7 @@
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {players.find(p => p.id === myId)?.hand.map((card, cIdx) => {
+                    {myPlayer?.hand.map((card, cIdx) => {
                       const isMyTurn = players[turnIndex]?.id === myId;
                       return (
                         <div
@@ -951,22 +1080,100 @@
 
               </div>
 
-              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-4 flex flex-col h-[560px] pop-shadow">
-                <h3 className="font-black text-xs text-slate-900 mb-3 flex items-center gap-1.5 border-b-2 border-slate-900 pb-2">
-                  <i className="fa-solid fa-list-ul text-rose-500"></i> ゲーム進行ログ
-                </h3>
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar text-xs font-bold">
-                  {logs.map((log, idx) => (
-                    <div key={idx} className="bg-white border-2 border-slate-900 p-2.5 rounded-xl text-slate-900 shadow-sm leading-relaxed">
-                      {log}
-                    </div>
-                  ))}
-                  <div ref={logEndRef} />
-                </div>
+              {/* 右下フロート: ログボタン */}
+              <button
+                onClick={() => setShowLogsModal(true)}
+                className="fixed bottom-4 right-4 bg-amber-400 hover:bg-amber-300 text-slate-900 border-3 border-slate-900 font-black px-4 py-2.5 rounded-2xl pop-shadow text-xs flex items-center gap-2 z-40"
+              >
+                <i className="fa-solid fa-list-ul text-rose-600"></i> 📜 ログを見る
+              </button>
+            </div>
+          )}
+
+          {/* 自分だけの一時情報ポップアップ (少年など) */}
+          {privateNotice && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-sm w-full pop-shadow text-slate-900 text-center animate-pop-card">
+                <div className="text-4xl mb-2">👁️</div>
+                <h3 className="font-black text-lg mb-2">あなただけの秘密情報</h3>
+                <p className="bg-white border-2 border-slate-900 p-4 rounded-2xl text-sm font-black text-slate-900 mb-6 shadow-sm">
+                  {privateNotice}
+                </p>
+                <button
+                  onClick={() => setPrivateNotice(null)}
+                  className="w-full bg-rose-500 hover:bg-rose-400 text-white font-black py-3 rounded-2xl border-3 border-slate-900 pop-button text-sm"
+                >
+                  理解しました (閉じる)
+                </button>
               </div>
             </div>
           )}
 
+          {/* 取り引き専用モーダル */}
+          {tradeState && (tradeState.fromId === myId || tradeState.toId === myId) && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-md w-full pop-shadow text-slate-900 text-center">
+                <div className="text-4xl mb-1">🤝</div>
+                <h3 className="font-black text-lg mb-1">【取り引き】カードの選択</h3>
+                <p className="text-xs font-bold text-amber-950 mb-4">
+                  交換で相手に渡すカードを1枚選んでください。
+                </p>
+
+                {((tradeState.fromId === myId && tradeState.fromCard) || (tradeState.toId === myId && tradeState.toCard)) ? (
+                  <div className="bg-white border-2 border-slate-900 p-4 rounded-2xl font-black text-sm text-slate-700 animate-pulse">
+                    相手の選択を待っています...
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {myPlayer?.hand.map(card => (
+                      <button
+                        key={card.instanceId}
+                        onClick={() => submitTradeCardChoice(card.instanceId)}
+                        className={`p-3 rounded-xl border-2 ${card.border} ${card.bg} ${card.text} font-black text-xs text-left shadow hover:scale-105 transition`}
+                      >
+                        <div className="font-bold">{card.name}</div>
+                        <div className="text-[9px] opacity-80 mt-1">{card.tag}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 情報操作専用モーダル */}
+          {infoState && myPlayer?.hand.length > 0 && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-md w-full pop-shadow text-slate-900 text-center">
+                <div className="text-4xl mb-1">🔄</div>
+                <h3 className="font-black text-lg mb-1">【情報操作】カードの選択</h3>
+                <p className="text-xs font-bold text-amber-950 mb-4">
+                  左隣のプレイヤーに渡したいカードを1枚選んでください。
+                </p>
+
+                {infoState.selections && infoState.selections[myId] ? (
+                  <div className="bg-white border-2 border-slate-900 p-4 rounded-2xl font-black text-sm text-slate-700 animate-pulse">
+                    全員の選択を待っています...
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {myPlayer?.hand.map(card => (
+                      <button
+                        key={card.instanceId}
+                        onClick={() => submitInfoCardChoice(card.instanceId)}
+                        className={`p-3 rounded-xl border-2 ${card.border} ${card.bg} ${card.text} font-black text-xs text-left shadow hover:scale-105 transition`}
+                      >
+                        <div className="font-bold">{card.name}</div>
+                        <div className="text-[9px] opacity-80 mt-1">{card.tag}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 対象指定モーダル (探偵・いぬ・取り引き対象決定) */}
           {pendingTargetCard && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-sm w-full pop-shadow text-slate-900">
@@ -1001,8 +1208,9 @@
             </div>
           )}
 
+          {/* ゲーム結果画面 */}
           {screen === 'result' && winner && (
-            <div className="my-auto py-8 flex flex-col items-center">
+            <div className="my-auto py-8 flex flex-col items-center z-40">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-8 max-w-md w-full pop-shadow text-center text-slate-900">
                 <div className="text-6xl mb-2">🏆</div>
                 <h2 className="text-3xl font-black mb-2 text-rose-600">ゲーム決着！</h2>
@@ -1012,9 +1220,7 @@
                 </div>
 
                 <button
-                  onClick={() => {
-                    if (isHost) handleStartGame();
-                  }}
+                  onClick={() => { if (isHost) handleStartGame(); }}
                   disabled={!isHost}
                   className={`w-full font-black py-4 rounded-2xl border-3 border-slate-900 pop-button text-base ${
                     isHost ? 'bg-rose-500 hover:bg-rose-400 text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'
@@ -1026,12 +1232,35 @@
             </div>
           )}
 
+          {/* モーダル: 進行ログ */}
+          {showLogsModal && (
+            <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-md w-full h-[70vh] flex flex-col pop-shadow text-slate-900">
+                <div className="flex justify-between items-center mb-3 border-b-2 border-slate-900 pb-2">
+                  <h3 className="font-black text-lg flex items-center gap-2">
+                    <i className="fa-solid fa-list-ul text-rose-500"></i> ゲーム進行ログ
+                  </h3>
+                  <button onClick={() => setShowLogsModal(false)} className="text-xl font-black px-2">✕</button>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar text-xs font-bold">
+                  {logs.map((log, idx) => (
+                    <div key={idx} className="bg-white border-2 border-slate-900 p-2.5 rounded-xl text-slate-900 shadow-sm leading-relaxed">
+                      {log}
+                    </div>
+                  ))}
+                  <div ref={logEndRef} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* モーダル: ルール説明 */}
           {showRules && (
             <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-lg w-full max-h-[80vh] flex flex-col pop-shadow text-slate-900">
                 <div className="flex justify-between items-center mb-3 border-b-2 border-slate-900 pb-2">
                   <h3 className="font-black text-lg text-slate-900">カード一覧・ルール</h3>
-                  <button onClick={() => setShowRules(false)} className="text-xl font-black">✕</button>
+                  <button onClick={() => setShowRules(false)} className="text-xl font-black px-2">✕</button>
                 </div>
                 <div className="overflow-y-auto space-y-2 pr-1 custom-scrollbar text-xs font-bold">
                   {Object.values(CARD_TYPES).map(c => (
