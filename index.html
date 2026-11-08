@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る ver 1.7 - オンライン対戦</title>
+  <title>犯人は踊る ver 1.8 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -122,6 +122,10 @@
       detective: () => {
         playTone(200, 0.2, 'sawtooth', 0.2);
         setTimeout(() => playTone(150, 0.3, 'sawtooth', 0.2), 150);
+      },
+      tension: () => {
+        playTone(180, 0.4, 'sawtooth', 0.15);
+        setTimeout(() => playTone(220, 0.4, 'sawtooth', 0.15), 200);
       }
     };
 
@@ -216,18 +220,19 @@
       const [logs, setLogs] = useState([]);
       const [winner, setWinner] = useState(null);
       
-      // モーダル・一時通知用ステート
+      // モーダル・一時通知ステート
       const [pendingTargetCard, setPendingTargetCard] = useState(null);
       const [showRules, setShowRules] = useState(false);
       const [showLogsModal, setShowLogsModal] = useState(false);
       
-      // 自分専用通知ステート（少年・うわさなど）
-      const [privateNotice, setPrivateNotice] = useState(null); 
-      const [rumorResultNotice, setRumorResultNotice] = useState(null); // うわさ結果専用
+      // 中央演出用ポップアップステート
+      const [centralAnnouncement, setCentralAnnouncement] = useState(null); 
+      // うわさ結果専用ステート（全員に個別表示）
+      const [rumorResultNotice, setRumorResultNotice] = useState(null);
 
       // 個別アクション用ステート
-      const [tradeState, setTradeState] = useState(null); // 取り引き進行用
-      const [infoState, setInfoState] = useState(null);   // 情報操作選択用
+      const [tradeState, setTradeState] = useState(null);
+      const [infoState, setInfoState] = useState(null);
 
       const logEndRef = useRef(null);
       const peerRef = useRef(null);
@@ -385,8 +390,8 @@
             setScreen('result');
             SOUNDS.win();
           }
-        } else if (data.type === 'PRIVATE_NOTICE') {
-          setPrivateNotice(data.message);
+        } else if (data.type === 'CENTRAL_ANNOUNCEMENT') {
+          setCentralAnnouncement(data.announcement);
         } else if (data.type === 'RUMOR_NOTICE') {
           setRumorResultNotice(data.notice);
         }
@@ -479,6 +484,7 @@
 
         let newLogs = [...curState.logs, `📢 ${currentPlayer.name} が【${card.name}】を出しました！`];
         let soundEffect = 'playCard';
+        let announcementData = null;
 
         currentPlayer.hand.splice(cardIdx, 1);
         currentPlayer.played = [...(currentPlayer.played || []), card];
@@ -491,11 +497,25 @@
         switch (card.id) {
           case 'first_discoverer':
             newLogs.push(`🔍 事件発生！${currentPlayer.name} が遺体を発見しました。`);
+            announcementData = {
+              title: '事件発生！',
+              actor: currentPlayer.name,
+              action: '第一発見者をプレイ',
+              result: 'これより犯人捜索が始まります！',
+              icon: 'fa-magnifying-glass'
+            };
             break;
 
           case 'criminal':
             gameWinner = calculateWinner('criminal', playerIdx, currentPlayers);
             newLogs.push(`😈 犯人が踊りきった！【犯人】を出した ${currentPlayer.name} の勝利！`);
+            announcementData = {
+              title: 'ゲーム決着！',
+              actor: currentPlayer.name,
+              action: '犯人カードを出し切った',
+              result: `勝者: ${winner ? winner.names : currentPlayer.name}`,
+              icon: 'fa-user-ninja'
+            };
             break;
 
           case 'detective':
@@ -507,14 +527,21 @@
               const hasCriminal = target.hand.some(c => c.id === 'criminal');
               const hasAlibi = target.hand.some(c => c.id === 'alibi');
 
+              let resText = `${target.name} 「違います！犯人ではありません。」`;
               if (hasCriminal && !hasAlibi) {
-                newLogs.push(`🎯 ${target.name} 「参りました…私が犯人です！」`);
+                resText = `${target.name} 「参りました…私が犯人です！」`;
                 gameWinner = calculateWinner('detective', playerIdx, currentPlayers);
               } else if (hasCriminal && hasAlibi) {
-                newLogs.push(`🛡️ ${target.name} 「アリバイがあります！犯人ではありません。」`);
-              } else {
-                newLogs.push(`❌ ${target.name} 「違います！犯人ではありません。」`);
+                resText = `${target.name} 「アリバイがあります！」(犯人だが防御)`;
               }
+
+              announcementData = {
+                title: '探偵の告発',
+                actor: currentPlayer.name,
+                action: `${target.name} を指名して追及！`,
+                result: resText,
+                icon: 'fa-user-tie'
+              };
             }
             break;
 
@@ -531,10 +558,19 @@
 
                 newLogs.push(`🐕 ${currentPlayer.name} の「いぬ」が ${target.name} からカードを1枚引き抜いた！`);
 
+                let dogRes = `${target.name} からカードを1枚引きました。`;
                 if (stolen.id === 'criminal') {
-                  newLogs.push(`🎉 「いぬ」が犯人カードをクンクン当てました！`);
+                  dogRes = `🎉 「いぬ」が犯人カードをクンクン当てました！`;
                   gameWinner = calculateWinner('dog', playerIdx, currentPlayers);
                 }
+
+                announcementData = {
+                  title: '捜査犬の嗅覚',
+                  actor: currentPlayer.name,
+                  action: `${target.name} の手札を探索`,
+                  result: dogRes,
+                  icon: 'fa-dog'
+                };
               }
             }
             break;
@@ -547,9 +583,24 @@
               : `👁️【目撃情報】犯人カードを持っている人はいません。`;
             
             if (currentPlayer.id === myId) {
-              setPrivateNotice(boyMessage);
+              setCentralAnnouncement({
+                title: '少年の目撃証言',
+                actor: currentPlayer.name,
+                action: '少年カードを発動',
+                result: boyMessage,
+                icon: 'fa-child-reaching'
+              });
             } else {
-              sendToClient(currentPlayer.id, { type: 'PRIVATE_NOTICE', message: boyMessage });
+              sendToClient(currentPlayer.id, { 
+                type: 'CENTRAL_ANNOUNCEMENT', 
+                announcement: {
+                  title: '少年の目撃証言',
+                  actor: currentPlayer.name,
+                  action: '少年カードを発動',
+                  result: boyMessage,
+                  icon: 'fa-child-reaching'
+                } 
+              });
             }
             break;
 
@@ -564,16 +615,22 @@
                 fromCard: null,
                 toCard: null
               };
+              announcementData = {
+                title: '取り引き交渉',
+                actor: currentPlayer.name,
+                action: `${target.name} とカード交換を開始`,
+                result: 'お互いに渡すカードを選択中...',
+                icon: 'fa-handshake'
+              };
             }
             break;
 
           case 'rumor':
             soundEffect = 'swapCard';
-            newLogs.push(`🗣️ うわすが流れた！全員が右隣の人の手札からランダムに1枚引き抜きます。`);
+            newLogs.push(`🗣️ うわすが流れた！全員が右隣の人からランダムに1枚引きました。`);
             const pCount = currentPlayers.length;
             const stolenList = [];
 
-            // 各自が右隣から引き抜く
             for (let i = 0; i < pCount; i++) {
               const rightIdx = (i + 1) % pCount;
               const rightHand = currentPlayers[rightIdx].hand;
@@ -589,32 +646,34 @@
               }
             }
 
-            // 手札データから削除
             stolenList.forEach(item => {
               const idx = currentPlayers[item.fromIdx].hand.findIndex(c => c.instanceId === item.card.instanceId);
               if (idx !== -1) currentPlayers[item.fromIdx].hand.splice(idx, 1);
             });
-            // 手札データへ追加
             stolenList.forEach(item => {
               currentPlayers[item.toIdx].hand.push(item.card);
             });
 
-            // 各自に「獲得」と「消失」の結果通知を個別に作成して送信
+            // 各自に中央ポップアップとして「うわさの結果」を送信・表示
             currentPlayers.forEach((p, idx) => {
               const gained = stolenList.find(s => s.toIdx === idx);
               const lost = stolenList.find(s => s.fromIdx === idx);
 
-              const noticeData = {
+              const rumorNotice = {
+                title: 'うわさの波及',
+                actor: currentPlayer.name,
+                action: '全員が右隣から1枚ドロー',
                 gainedCard: gained ? gained.card : null,
                 gainedFrom: gained ? gained.fromPlayer.name : null,
                 lostCard: lost ? lost.card : null,
-                lostTo: lost ? lost.toPlayer.name : null
+                lostTo: lost ? lost.toPlayer.name : null,
+                icon: 'fa-comments'
               };
 
               if (p.id === myId) {
-                setRumorResultNotice(noticeData);
+                setRumorResultNotice(rumorNotice);
               } else {
-                sendToClient(p.id, { type: 'RUMOR_NOTICE', notice: noticeData });
+                sendToClient(p.id, { type: 'RUMOR_NOTICE', notice: rumorNotice });
               }
             });
             break;
@@ -623,9 +682,23 @@
             soundEffect = 'swapCard';
             newLogs.push(`🔄 情報操作！全員が左隣の人に渡すカードを選んでいます...`);
             nextInfoState = { selections: {} };
+            announcementData = {
+              title: '情報操作',
+              actor: currentPlayer.name,
+              action: '左隣へ手札を1枚パス',
+              result: '全員が渡すカードを選択中...',
+              icon: 'fa-arrow-rotate-right'
+            };
             break;
 
           default:
+            announcementData = {
+              title: card.name,
+              actor: currentPlayer.name,
+              action: 'カードをプレイ',
+              result: card.desc,
+              icon: card.icon
+            };
             break;
         }
 
@@ -642,6 +715,7 @@
         setLogs(newLogs);
         setTradeState(nextTradeState);
         setInfoState(nextInfoState);
+        if (announcementData) setCentralAnnouncement(announcementData);
 
         if (SOUNDS[soundEffect]) SOUNDS[soundEffect]();
 
@@ -662,6 +736,13 @@
           soundEffect,
           winner: gameWinner
         });
+
+        if (announcementData) {
+          broadcast({
+            type: 'CENTRAL_ANNOUNCEMENT',
+            announcement: announcementData
+          });
+        }
       };
 
       // --- 【取り引き】カード提出処理 ---
@@ -697,10 +778,18 @@
           }
 
           const newLogs = [...curState.logs, `🤝 ${p1.name} と ${p2.name} の取り引きが完了しました！`];
+          const announce = {
+            title: '取り引き成立',
+            actor: p1.name,
+            action: `${p2.name} とカードを交換`,
+            result: 'お互いの手札が1枚ずつ入れ替わりました！',
+            icon: 'fa-handshake'
+          };
 
           setPlayers(currentPlayers);
           setLogs(newLogs);
           setTradeState(null);
+          setCentralAnnouncement(announce);
 
           broadcast({
             type: 'UPDATE_STATE',
@@ -711,6 +800,10 @@
             tradeState: null,
             infoState: null,
             soundEffect: 'swapCard'
+          });
+          broadcast({
+            type: 'CENTRAL_ANNOUNCEMENT',
+            announcement: announce
           });
         } else {
           setTradeState(nextTrade);
@@ -765,10 +858,18 @@
           });
 
           const newLogs = [...curState.logs, `🔄 情報操作が完了！全員の手札が左隣に移動しました。`];
+          const announce = {
+            title: '情報操作完了',
+            actor: '全員',
+            action: '手札を左隣へ一斉パス',
+            result: '各自の手札が綺麗に入れ替わりました！',
+            icon: 'fa-arrow-rotate-right'
+          };
 
           setPlayers(currentPlayers);
           setLogs(newLogs);
           setInfoState(null);
+          setCentralAnnouncement(announce);
 
           broadcast({
             type: 'UPDATE_STATE',
@@ -779,6 +880,10 @@
             tradeState: null,
             infoState: null,
             soundEffect: 'swapCard'
+          });
+          broadcast({
+            type: 'CENTRAL_ANNOUNCEMENT',
+            announcement: announce
           });
         } else {
           setInfoState(nextInfo);
@@ -832,7 +937,7 @@
                 <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
                   犯人は踊る
                   <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
-                    ver 1.7
+                    ver 1.8
                   </span>
                 </h1>
                 <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
@@ -1122,7 +1227,38 @@
             </div>
           )}
 
-          {/* 【うわさ】結果の一時中央ポップアップ (自分専用) */}
+          {/* 全員向け中央アクション結果ポップアップ (探偵・いぬ・一般カードなど) */}
+          {centralAnnouncement && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-md w-full pop-shadow text-slate-900 text-center animate-pop-card">
+                <div className="w-14 h-14 bg-rose-500 rounded-full border-3 border-slate-900 flex items-center justify-center text-2xl text-white mx-auto mb-3 shadow">
+                  <i className={`fa-solid ${centralAnnouncement.icon || 'fa-bell'}`}></i>
+                </div>
+                <span className="text-[10px] font-black bg-slate-900 text-amber-400 px-3 py-1 rounded-full uppercase tracking-widest border border-amber-400/50">
+                  {centralAnnouncement.title}
+                </span>
+                <div className="font-black text-base text-slate-900 mt-2 mb-1">
+                  [ {centralAnnouncement.actor} ] の行動
+                </div>
+                <div className="text-xs font-bold text-amber-950 mb-4">
+                  {centralAnnouncement.action}
+                </div>
+                
+                <div className="bg-white border-2 border-slate-900 p-4 rounded-2xl text-sm font-black text-slate-900 mb-6 shadow-sm leading-relaxed">
+                  {centralAnnouncement.result}
+                </div>
+
+                <button
+                  onClick={() => setCentralAnnouncement(null)}
+                  className="w-full bg-rose-500 hover:bg-rose-400 text-white font-black py-3 rounded-2xl border-3 border-slate-900 pop-button text-sm shadow"
+                >
+                  確認しました (閉じる)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 【うわさ】結果の一時中央ポップアップ (全員に個別の取得・喪失を表示) */}
           {rumorResultNotice && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-sm w-full pop-shadow text-slate-900 text-center animate-pop-card">
@@ -1172,25 +1308,6 @@
                   className="w-full bg-rose-500 hover:bg-rose-400 text-white font-black py-3 rounded-2xl border-3 border-slate-900 pop-button text-sm"
                 >
                   確認しました (閉じる)
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* 自分だけの一時情報ポップアップ (少年など) */}
-          {privateNotice && (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-sm w-full pop-shadow text-slate-900 text-center animate-pop-card">
-                <div className="text-4xl mb-2">👁️</div>
-                <h3 className="font-black text-lg mb-2">あなただけの秘密情報</h3>
-                <p className="bg-white border-2 border-slate-900 p-4 rounded-2xl text-sm font-black text-slate-900 mb-6 shadow-sm">
-                  {privateNotice}
-                </p>
-                <button
-                  onClick={() => setPrivateNotice(null)}
-                  className="w-full bg-rose-500 hover:bg-rose-400 text-white font-black py-3 rounded-2xl border-3 border-slate-900 pop-button text-sm"
-                >
-                  理解しました (閉じる)
                 </button>
               </div>
             </div>
