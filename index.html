@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る ver 1.2 - オンライン対戦</title>
+  <title>犯人は踊る ver 1.21 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -81,7 +81,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // 無料の公開デモ用Firebase設定（リアルタイム同期用）
+    // Firebase 接続設定
     const firebaseConfig = {
       databaseURL: "https://hannin-wa-odoru-default-rtdb.firebaseio.com"
     };
@@ -156,6 +156,7 @@
       const [playerName, setPlayerName] = useState('');
       const [myId] = useState(() => 'user_' + Math.random().toString(36).substr(2, 6));
       const [isHost, setIsHost] = useState(false);
+      const [isLoading, setIsLoading] = useState(false);
       
       const [gameState, setGameState] = useState({
         players: [],
@@ -176,7 +177,7 @@
         }
       }, [gameState.logs]);
 
-      // 部屋の変更をリアルタイム監視
+      // 部屋の同期監視
       useEffect(() => {
         if (!roomCode) return;
         const roomRef = db.ref(`rooms/${roomCode}`);
@@ -196,14 +197,15 @@
       const generate3DigitCode = () => Math.floor(100 + Math.random() * 900).toString();
 
       // 部屋作成
-      const handleCreateRoom = () => {
+      const handleCreateRoom = async () => {
         if (!playerName.trim()) return alert('名前を入力してください！');
+        setIsLoading(true);
         const code = generate3DigitCode();
         setRoomCode(code);
         setIsHost(true);
 
         const newRoomData = {
-          players: [{ id: myId, name: playerName, hand: [], played: [] }],
+          players: [{ id: myId, name: playerName.trim(), hand: [], played: [] }],
           turnIndex: 0,
           playedStack: [],
           logs: [`部屋 [${code}] が作成されました。`],
@@ -211,45 +213,59 @@
           winner: null
         };
 
-        db.ref(`rooms/${code}`).set(newRoomData);
-        setScreen('lobby');
+        try {
+          await db.ref(`rooms/${code}`).set(newRoomData);
+          setScreen('lobby');
+        } catch (err) {
+          alert('通信エラーが発生しました: ' + err.message);
+        } finally {
+          setIsLoading(false);
+        }
       };
 
       // 部屋参加
-      const handleJoinRoom = () => {
+      const handleJoinRoom = async () => {
         if (!playerName.trim()) return alert('名前を入力してください！');
-        if (inputCode.length !== 3) return alert('3桁の部屋番号を入力してください！');
+        if (inputCode.trim().length !== 3) return alert('3桁の部屋番号を入力してください！');
 
-        const code = inputCode;
+        setIsLoading(true);
+        const code = inputCode.trim();
         const roomRef = db.ref(`rooms/${code}`);
 
-        roomRef.get().then((snapshot) => {
+        try {
+          const snapshot = await roomRef.once('value');
           if (!snapshot.exists()) {
-            alert('部屋が存在しません。番号を確認してください。');
+            alert(`部屋番号 [${code}] が見つかりません。ホストが部屋を作成したか確認してください。`);
+            setIsLoading(false);
             return;
           }
 
           const roomData = snapshot.val();
           if (roomData.status !== 'lobby') {
-            alert('この部屋はすでにゲームが進行中です。');
+            alert('この部屋はすでにゲームが開始されています。');
+            setIsLoading(false);
             return;
           }
 
           const existingPlayers = roomData.players || [];
           if (!existingPlayers.some(p => p.id === myId)) {
-            existingPlayers.push({ id: myId, name: playerName, hand: [], played: [] });
-            roomRef.child('players').set(existingPlayers);
+            existingPlayers.push({ id: myId, name: playerName.trim(), hand: [], played: [] });
+            await roomRef.child('players').set(existingPlayers);
           }
 
           setRoomCode(code);
           setIsHost(false);
           setScreen('lobby');
-        });
+        } catch (err) {
+          alert('接続エラー: ' + err.message);
+        } finally {
+          setIsLoading(false);
+        }
       };
 
       // ゲーム開始
       const handleStartGame = () => {
-        const players = gameState.players;
+        const players = gameState.players || [];
         if (players.length < 3) {
           alert('ゲームを開始するには最低3人のプレイヤーが必要です！');
           return;
@@ -299,7 +315,7 @@
       };
 
       const clickPlayCard = (cardIdx) => {
-        const myIdx = gameState.players.findIndex(p => p.id === myId);
+        const myIdx = (gameState.players || []).findIndex(p => p.id === myId);
         if (gameState.turnIndex !== myIdx) return;
 
         const card = gameState.players[myIdx].hand[cardIdx];
@@ -315,15 +331,13 @@
       const processCardPlay = (playerIdx, cardIdx, targetId) => {
         setPendingTargetCard(null);
 
-        const currentPlayers = [...gameState.players];
+        const currentPlayers = JSON.parse(JSON.stringify(gameState.players || []));
         const currentPlayer = currentPlayers[playerIdx];
         const card = currentPlayer.hand[cardIdx];
 
         let logs = [...(gameState.logs || []), `📢 ${currentPlayer.name} が【${card.name}】を出しました！`];
 
-        const newHand = [...currentPlayer.hand];
-        newHand.splice(cardIdx, 1);
-        currentPlayer.hand = newHand;
+        currentPlayer.hand.splice(cardIdx, 1);
         currentPlayer.played = [...(currentPlayer.played || []), card];
 
         const playedStack = [...(gameState.playedStack || []), { card, playedBy: currentPlayer.name }];
@@ -502,10 +516,10 @@
                 <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
                   犯人は踊る
                   <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
-                    ver 1.2
+                    ver 1.21
                   </span>
                 </h1>
-                <p className="text-[9px] text-amber-950 font-extrabold">ONLINE POP EDITION</p>
+                <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
               </div>
             </div>
 
@@ -549,9 +563,10 @@
                 <div className="grid grid-cols-1 gap-3">
                   <button
                     onClick={handleCreateRoom}
+                    disabled={isLoading}
                     className="w-full bg-rose-500 hover:bg-rose-400 text-white font-black py-4 rounded-2xl border-3 border-slate-900 pop-button text-base flex items-center justify-center gap-2"
                   >
-                    <i className="fa-solid fa-plus text-xl"></i> 部屋を作る (ホスト)
+                    <i className="fa-solid fa-plus text-xl"></i> {isLoading ? '作成中...' : '部屋を作る (ホスト)'}
                   </button>
 
                   <div className="relative my-2 flex items-center justify-center">
@@ -570,9 +585,10 @@
                     />
                     <button
                       onClick={handleJoinRoom}
+                      disabled={isLoading}
                       className="w-1/2 bg-sky-400 hover:bg-sky-300 text-slate-900 font-black py-3 rounded-2xl border-3 border-slate-900 pop-button text-sm flex items-center justify-center gap-1"
                     >
-                      <i className="fa-solid fa-right-to-bracket"></i> 参加する
+                      <i className="fa-solid fa-right-to-bracket"></i> {isLoading ? '確認中...' : '参加する'}
                     </button>
                   </div>
                 </div>
@@ -642,7 +658,7 @@
                 {/* 1. 他プレイヤー配置 */}
                 <div className="flex justify-around items-center w-full z-10 pt-2">
                   {orderedPlayers.slice(1).map(p => {
-                    const isTurn = gameState.players[gameState.turnIndex]?.id === p.id;
+                    const isTurn = (gameState.players || [])[gameState.turnIndex]?.id === p.id;
                     return (
                       <div
                         key={p.id}
@@ -716,23 +732,23 @@
                 <div className="bg-slate-950/90 border-3 border-amber-400 rounded-3xl p-3 z-10 shadow-2xl">
                   <div className="flex justify-between items-center mb-2 px-1">
                     <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
-                      <i className="fa-solid fa-hand text-rose-400"></i> あなたの手札 ({(gameState.players.find(p => p.id === myId)?.hand || []).length}枚)
+                      <i className="fa-solid fa-hand text-rose-400"></i> あなたの手札 ({((gameState.players || []).find(p => p.id === myId)?.hand || []).length}枚)
                     </span>
 
-                    {gameState.players[gameState.turnIndex]?.id === myId ? (
+                    {(gameState.players || [])[gameState.turnIndex]?.id === myId ? (
                       <span className="text-xs font-black bg-rose-500 text-white px-3 py-1 rounded-full border border-slate-900 animate-pulse">
                         あなたの番です！カードを選んで出してください
                       </span>
                     ) : (
                       <span className="text-xs font-bold text-slate-400">
-                        {gameState.players[gameState.turnIndex]?.name} の思考中...
+                        {(gameState.players || [])[gameState.turnIndex]?.name} の思考中...
                       </span>
                     )}
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {(gameState.players.find(p => p.id === myId)?.hand || []).map((card, cIdx) => {
-                      const isMyTurn = gameState.players[gameState.turnIndex]?.id === myId;
+                    {((gameState.players || []).find(p => p.id === myId)?.hand || []).map((card, cIdx) => {
+                      const isMyTurn = (gameState.players || [])[gameState.turnIndex]?.id === myId;
                       return (
                         <div
                           key={card.instanceId}
@@ -793,11 +809,11 @@
                 </p>
 
                 <div className="space-y-2 mb-4">
-                  {gameState.players.filter(p => p.id !== myId && p.hand && p.hand.length > 0).map(p => (
+                  {(gameState.players || []).filter(p => p.id !== myId && p.hand && p.hand.length > 0).map(p => (
                     <button
                       key={p.id}
                       onClick={() => {
-                        const myIdx = gameState.players.findIndex(pl => pl.id === myId);
+                        const myIdx = (gameState.players || []).findIndex(pl => pl.id === myId);
                         processCardPlay(myIdx, pendingTargetCard.cardIdx, p.id);
                       }}
                       className="w-full bg-white hover:bg-rose-500 hover:text-white font-black py-3 px-4 rounded-2xl border-3 border-slate-900 pop-button text-sm flex justify-between items-center transition"
