@@ -3,16 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る ver 1.21 - オンライン対戦</title>
+  <title>犯人は踊る ver 1.3 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  
-  <!-- Firebase SDK -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-  
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&display=swap');
@@ -81,16 +77,6 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // Firebase 接続設定
-    const firebaseConfig = {
-      databaseURL: "https://hannin-wa-odoru-default-rtdb.firebaseio.com"
-    };
-
-    if (!firebase.apps.length) {
-      firebase.initializeApp(firebaseConfig);
-    }
-    const db = firebase.database();
-
     const CARD_TYPES = {
       FIRST_DISCOVERER: { 
         id: 'first_discoverer', name: '第一発見者', bg: 'bg-gradient-to-b from-amber-300 to-amber-500', 
@@ -154,118 +140,148 @@
       const [roomCode, setRoomCode] = useState('');
       const [inputCode, setInputCode] = useState('');
       const [playerName, setPlayerName] = useState('');
-      const [myId] = useState(() => 'user_' + Math.random().toString(36).substr(2, 6));
       const [isHost, setIsHost] = useState(false);
-      const [isLoading, setIsLoading] = useState(false);
+      const [statusText, setStatusText] = useState('');
       
-      const [gameState, setGameState] = useState({
-        players: [],
-        turnIndex: 0,
-        playedStack: [],
-        logs: [],
-        status: 'lobby',
-        winner: null
-      });
-
+      const [players, setPlayers] = useState([]);
+      const [myId, setMyId] = useState(null);
+      const [turnIndex, setTurnIndex] = useState(0);
+      const [playedStack, setPlayedStack] = useState([]);
+      const [logs, setLogs] = useState([]);
+      const [winner, setWinner] = useState(null);
       const [pendingTargetCard, setPendingTargetCard] = useState(null);
       const [showRules, setShowRules] = useState(false);
       const logEndRef = useRef(null);
+
+      const peerRef = useRef(null);
+      const connectionsRef = useRef([]);
 
       useEffect(() => {
         if (logEndRef.current) {
           logEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-      }, [gameState.logs]);
-
-      // 部屋の同期監視
-      useEffect(() => {
-        if (!roomCode) return;
-        const roomRef = db.ref(`rooms/${roomCode}`);
-        const handleValue = (snapshot) => {
-          const val = snapshot.val();
-          if (val) {
-            setGameState(val);
-            if (val.status === 'playing') setScreen('game');
-            if (val.status === 'ended') setScreen('result');
-            if (val.status === 'lobby') setScreen('lobby');
-          }
-        };
-        roomRef.on('value', handleValue);
-        return () => roomRef.off('value', handleValue);
-      }, [roomCode]);
+      }, [logs]);
 
       const generate3DigitCode = () => Math.floor(100 + Math.random() * 900).toString();
 
-      // 部屋作成
-      const handleCreateRoom = async () => {
+      const handleCreateRoom = () => {
         if (!playerName.trim()) return alert('名前を入力してください！');
-        setIsLoading(true);
+        setStatusText('部屋を作成中...');
         const code = generate3DigitCode();
         setRoomCode(code);
         setIsHost(true);
 
-        const newRoomData = {
-          players: [{ id: myId, name: playerName.trim(), hand: [], played: [] }],
-          turnIndex: 0,
-          playedStack: [],
-          logs: [`部屋 [${code}] が作成されました。`],
-          status: 'lobby',
-          winner: null
-        };
+        const hostPeerId = `h-odoru-${code}`;
+        if (peerRef.current) peerRef.current.destroy();
 
-        try {
-          await db.ref(`rooms/${code}`).set(newRoomData);
+        const peer = new Peer(hostPeerId);
+        peerRef.current = peer;
+
+        peer.on('open', (id) => {
+          setMyId(id);
+          setStatusText('');
+          const initialPlayers = [{ id, name: playerName.trim(), hand: [], played: [] }];
+          setPlayers(initialPlayers);
           setScreen('lobby');
-        } catch (err) {
-          alert('通信エラーが発生しました: ' + err.message);
-        } finally {
-          setIsLoading(false);
-        }
+        });
+
+        peer.on('connection', (conn) => {
+          connectionsRef.current.push(conn);
+          conn.on('data', (data) => handleHostReceiveData(data, conn));
+        });
+
+        peer.on('error', (err) => {
+          setStatusText('');
+          if (err.type === 'unavailable-id') {
+            handleCreateRoom(); // ID被りの場合は再生成
+          } else {
+            alert('接続エラーが発生しました。時間を置いて再度お試しください。');
+          }
+        });
       };
 
-      // 部屋参加
-      const handleJoinRoom = async () => {
+      const handleJoinRoom = () => {
         if (!playerName.trim()) return alert('名前を入力してください！');
         if (inputCode.trim().length !== 3) return alert('3桁の部屋番号を入力してください！');
 
-        setIsLoading(true);
+        setStatusText('部屋へ接続中...');
         const code = inputCode.trim();
-        const roomRef = db.ref(`rooms/${code}`);
+        setRoomCode(code);
+        setIsHost(false);
 
-        try {
-          const snapshot = await roomRef.once('value');
-          if (!snapshot.exists()) {
-            alert(`部屋番号 [${code}] が見つかりません。ホストが部屋を作成したか確認してください。`);
-            setIsLoading(false);
-            return;
-          }
+        if (peerRef.current) peerRef.current.destroy();
 
-          const roomData = snapshot.val();
-          if (roomData.status !== 'lobby') {
-            alert('この部屋はすでにゲームが開始されています。');
-            setIsLoading(false);
-            return;
-          }
+        const peer = new Peer();
+        peerRef.current = peer;
 
-          const existingPlayers = roomData.players || [];
-          if (!existingPlayers.some(p => p.id === myId)) {
-            existingPlayers.push({ id: myId, name: playerName.trim(), hand: [], played: [] });
-            await roomRef.child('players').set(existingPlayers);
-          }
+        peer.on('open', (id) => {
+          setMyId(id);
+          const hostPeerId = `h-odoru-${code}`;
+          const conn = peer.connect(hostPeerId);
+          connectionsRef.current = [conn];
 
-          setRoomCode(code);
-          setIsHost(false);
-          setScreen('lobby');
-        } catch (err) {
-          alert('接続エラー: ' + err.message);
-        } finally {
-          setIsLoading(false);
+          const timer = setTimeout(() => {
+            setStatusText('');
+            alert(`部屋番号 [${code}] が見つかりませんでした。ホストが部屋を作成しているか確認してください。`);
+          }, 8000);
+
+          conn.on('open', () => {
+            clearTimeout(timer);
+            setStatusText('');
+            conn.send({ type: 'JOIN', name: playerName.trim(), id });
+            setScreen('lobby');
+          });
+
+          conn.on('data', (data) => handleClientReceiveData(data));
+        });
+
+        peer.on('error', (err) => {
+          setStatusText('');
+          alert('接続に失敗しました。部屋番号が正しいか確認してください。');
+        });
+      };
+
+      const broadcast = (data) => {
+        connectionsRef.current.forEach(conn => {
+          if (conn.open) conn.send(data);
+        });
+      };
+
+      const handleHostReceiveData = (data, conn) => {
+        if (data.type === 'JOIN') {
+          setPlayers(prev => {
+            if (prev.some(p => p.id === data.id)) return prev;
+            const updated = [...prev, { id: data.id, name: data.name, hand: [], played: [] }];
+            broadcast({ type: 'SYNC_LOBBY', players: updated });
+            return updated;
+          });
+        } else if (data.type === 'PLAY_CARD') {
+          processCardPlay(data.playerIdx, data.cardIdx, data.targetId);
         }
       };
 
-      // ゲーム開始
+      const handleClientReceiveData = (data) => {
+        if (data.type === 'SYNC_LOBBY') {
+          setPlayers(data.players);
+        } else if (data.type === 'START_GAME') {
+          setPlayers(data.players);
+          setTurnIndex(data.turnIndex);
+          setPlayedStack(data.playedStack || []);
+          setLogs(data.logs);
+          setScreen('game');
+        } else if (data.type === 'UPDATE_STATE') {
+          setPlayers(data.players);
+          setTurnIndex(data.turnIndex);
+          setPlayedStack(data.playedStack || []);
+          setLogs(data.logs);
+          if (data.winner) {
+            setWinner(data.winner);
+            setScreen('result');
+          }
+        }
+      };
+
       const handleStartGame = () => {
-        const players = gameState.players || [];
         if (players.length < 3) {
           alert('ゲームを開始するには最低3人のプレイヤーが必要です！');
           return;
@@ -304,154 +320,170 @@
 
         const initialLogs = [`🎮 ゲーム開始！【第一発見者】を持つ ${updatedPlayers[starterIdx].name} からスタートです！`];
 
-        db.ref(`rooms/${roomCode}`).update({
+        setPlayers(updatedPlayers);
+        setTurnIndex(starterIdx);
+        setPlayedStack([]);
+        setLogs(initialLogs);
+        setScreen('game');
+
+        broadcast({
+          type: 'START_GAME',
           players: updatedPlayers,
           turnIndex: starterIdx,
           playedStack: [],
-          logs: initialLogs,
-          status: 'playing',
-          winner: null
+          logs: initialLogs
         });
       };
 
       const clickPlayCard = (cardIdx) => {
-        const myIdx = (gameState.players || []).findIndex(p => p.id === myId);
-        if (gameState.turnIndex !== myIdx) return;
+        const myIdx = players.findIndex(p => p.id === myId);
+        if (turnIndex !== myIdx) return;
 
-        const card = gameState.players[myIdx].hand[cardIdx];
+        const card = players[myIdx].hand[cardIdx];
 
         if (['detective', 'dog', 'trade'].includes(card.id)) {
           setPendingTargetCard({ cardIdx, card });
           return;
         }
 
-        processCardPlay(myIdx, cardIdx, null);
+        submitPlayCard(myIdx, cardIdx, null);
+      };
+
+      const submitPlayCard = (playerIdx, cardIdx, targetId) => {
+        if (!isHost) {
+          connectionsRef.current[0].send({ type: 'PLAY_CARD', playerIdx, cardIdx, targetId });
+          setPendingTargetCard(null);
+          return;
+        }
+        processCardPlay(playerIdx, cardIdx, targetId);
+        setPendingTargetCard(null);
       };
 
       const processCardPlay = (playerIdx, cardIdx, targetId) => {
-        setPendingTargetCard(null);
-
-        const currentPlayers = JSON.parse(JSON.stringify(gameState.players || []));
-        const currentPlayer = currentPlayers[playerIdx];
+        const currentPlayer = players[playerIdx];
         const card = currentPlayer.hand[cardIdx];
 
-        let logs = [...(gameState.logs || []), `📢 ${currentPlayer.name} が【${card.name}】を出しました！`];
+        let newLogs = [...logs, `📢 ${currentPlayer.name} が【${card.name}】を出しました！`];
 
-        currentPlayer.hand.splice(cardIdx, 1);
-        currentPlayer.played = [...(currentPlayer.played || []), card];
+        const newHand = [...currentPlayer.hand];
+        newHand.splice(cardIdx, 1);
 
-        const playedStack = [...(gameState.playedStack || []), { card, playedBy: currentPlayer.name }];
+        let nextPlayers = [...players];
+        nextPlayers[playerIdx] = {
+          ...currentPlayer,
+          hand: newHand,
+          played: [...currentPlayer.played, card]
+        };
 
-        let winner = null;
-        let status = 'playing';
+        const newPlayedStack = [...playedStack, { card, playedBy: currentPlayer.name }];
+
+        let gameWinner = null;
+        const actor = nextPlayers[playerIdx];
 
         switch (card.id) {
           case 'first_discoverer':
-            logs.push(`🔍 事件発生！${currentPlayer.name} が遺体を発見しました。`);
+            newLogs.push(`🔍 事件発生！${actor.name} が遺体を発見しました。`);
             break;
 
           case 'criminal':
-            winner = calculateWinner('criminal', playerIdx, currentPlayers);
-            logs.push(`😈 犯人が踊りきった！【犯人】を出した ${currentPlayer.name} の勝利！`);
-            status = 'ended';
+            gameWinner = calculateWinner('criminal', playerIdx, nextPlayers);
+            newLogs.push(`😈 犯人が踊りきった！【犯人】を出した ${actor.name} の勝利！`);
             break;
 
           case 'detective':
             if (targetId) {
-              const target = currentPlayers.find(p => p.id === targetId);
-              logs.push(`🕵️ ${currentPlayer.name} が ${target.name} に「あなたが犯人ですか？」と追及！`);
+              const target = nextPlayers.find(p => p.id === targetId);
+              newLogs.push(`🕵️ ${actor.name} が ${target.name} に「あなたが犯人ですか？」と追及！`);
 
               const hasCriminal = target.hand.some(c => c.id === 'criminal');
               const hasAlibi = target.hand.some(c => c.id === 'alibi');
 
               if (hasCriminal && !hasAlibi) {
-                logs.push(`🎯 ${target.name} 「参りました…私が犯人です！」`);
-                winner = calculateWinner('detective', playerIdx, currentPlayers);
-                status = 'ended';
+                newLogs.push(`🎯 ${target.name} 「参りました…私が犯人です！」`);
+                gameWinner = calculateWinner('detective', playerIdx, nextPlayers);
               } else if (hasCriminal && hasAlibi) {
-                logs.push(`🛡️ ${target.name} 「アリバイがあります！犯人ではありません。」`);
+                newLogs.push(`🛡️ ${target.name} 「アリバイがあります！犯人ではありません。」`);
               } else {
-                logs.push(`❌ ${target.name} 「違います！犯人ではありません。」`);
+                newLogs.push(`❌ ${target.name} 「違います！犯人ではありません。」`);
               }
             }
             break;
 
           case 'dog':
             if (targetId) {
-              const target = currentPlayers.find(p => p.id === targetId);
+              const target = nextPlayers.find(p => p.id === targetId);
               if (target.hand.length > 0) {
                 const stolenIdx = Math.floor(Math.random() * target.hand.length);
                 const stolen = target.hand[stolenIdx];
 
                 target.hand.splice(stolenIdx, 1);
-                currentPlayer.hand.push(stolen);
+                actor.hand.push(stolen);
 
-                logs.push(`🐕 ${currentPlayer.name} の「いぬ」が ${target.name} から【${stolen.name}】を引き抜いた！`);
+                newLogs.push(`🐕 ${actor.name} の「いぬ」が ${target.name} から【${stolen.name}】を引き抜いた！`);
 
                 if (stolen.id === 'criminal') {
-                  logs.push(`🎉 「いぬ」が犯人カードをクンクン当てました！`);
-                  winner = calculateWinner('dog', playerIdx, currentPlayers);
-                  status = 'ended';
+                  newLogs.push(`🎉 「いぬ」が犯人カードをクンクン当てました！`);
+                  gameWinner = calculateWinner('dog', playerIdx, nextPlayers);
                 }
               }
             }
             break;
 
           case 'boy':
-            const crim = currentPlayers.find(p => p.hand.some(c => c.id === 'criminal'));
-            logs.push(crim ? `👁️ 「少年」が目撃した！犯人は… ${crim.name} だ！（非公開情報）` : `👁️ 「少年」は何も目撃できなかった…`);
+            const crim = nextPlayers.find(p => p.hand.some(c => c.id === 'criminal'));
+            newLogs.push(crim ? `👁️ 「少年」が目撃した！犯人は… ${crim.name} だ！（非公開情報）` : `👁️ 「少年」は何も目撃できなかった…`);
             break;
 
           case 'trade':
             if (targetId) {
-              const target = currentPlayers.find(p => p.id === targetId);
-              if (currentPlayer.hand.length > 0 && target.hand.length > 0) {
-                const actorCard = currentPlayer.hand.pop();
+              const target = nextPlayers.find(p => p.id === targetId);
+              if (actor.hand.length > 0 && target.hand.length > 0) {
+                const actorCard = actor.hand.pop();
                 const targetCard = target.hand.pop();
-                currentPlayer.hand.push(targetCard);
+                actor.hand.push(targetCard);
                 target.hand.push(actorCard);
-                logs.push(`🤝 ${currentPlayer.name} と ${target.name} がカードを1枚交換しました。`);
+                newLogs.push(`🤝 ${actor.name} と ${target.name} がカードを1枚交換しました。`);
               }
             }
             break;
 
           case 'rumor':
-            logs.push(`🗣️ うわさが流れた！全員が右隣の人の手札から1枚引き抜きます。`);
-            const pCount = currentPlayers.length;
+            newLogs.push(`🗣️ うわすが流れた！全員が右隣の人の手札から1枚引き抜きます。`);
+            const pCount = nextPlayers.length;
             const stolenCards = [];
             for (let i = 0; i < pCount; i++) {
               const rightIdx = (i + 1) % pCount;
-              const rightHand = currentPlayers[rightIdx].hand;
+              const rightHand = nextPlayers[rightIdx].hand;
               if (rightHand.length > 0) {
                 const randIdx = Math.floor(Math.random() * rightHand.length);
                 stolenCards.push({ from: rightIdx, to: i, card: rightHand[randIdx], randIdx });
               }
             }
             stolenCards.forEach(item => {
-              currentPlayers[item.from].hand.splice(item.randIdx, 1);
+              nextPlayers[item.from].hand.splice(item.randIdx, 1);
             });
             stolenCards.forEach(item => {
-              currentPlayers[item.to].hand.push(item.card);
+              nextPlayers[item.to].hand.push(item.card);
             });
             break;
 
           case 'information':
-            logs.push(`🔄 情報操作！全員が左隣の人にカードを1枚ずつ渡しました。`);
-            const countP = currentPlayers.length;
+            newLogs.push(`🔄 情報操作！全員が左隣の人にカードを1枚ずつ渡しました。`);
+            const countP = nextPlayers.length;
             const passedCards = [];
             for (let i = 0; i < countP; i++) {
               const leftIdx = (i - 1 + countP) % countP;
-              const pHand = currentPlayers[i].hand;
+              const pHand = nextPlayers[i].hand;
               if (pHand.length > 0) {
                 passedCards.push({ from: i, to: leftIdx, card: pHand[0] });
               }
             }
             passedCards.forEach(item => {
-              const idx = currentPlayers[item.from].hand.findIndex(c => c.instanceId === item.card.instanceId);
-              if (idx !== -1) currentPlayers[item.from].hand.splice(idx, 1);
+              const idx = nextPlayers[item.from].hand.findIndex(c => c.instanceId === item.card.instanceId);
+              if (idx !== -1) nextPlayers[item.from].hand.splice(idx, 1);
             });
             passedCards.forEach(item => {
-              currentPlayers[item.to].hand.push(item.card);
+              nextPlayers[item.to].hand.push(item.card);
             });
             break;
 
@@ -459,20 +491,30 @@
             break;
         }
 
-        let nextTurn = (gameState.turnIndex + 1) % currentPlayers.length;
+        let nextTurn = (turnIndex + 1) % players.length;
         let loopCount = 0;
-        while (currentPlayers[nextTurn].hand.length === 0 && loopCount < currentPlayers.length) {
-          nextTurn = (nextTurn + 1) % currentPlayers.length;
+        while (nextPlayers[nextTurn].hand.length === 0 && loopCount < players.length) {
+          nextTurn = (nextTurn + 1) % players.length;
           loopCount++;
         }
 
-        db.ref(`rooms/${roomCode}`).update({
-          players: currentPlayers,
+        setPlayers(nextPlayers);
+        setTurnIndex(nextTurn);
+        setPlayedStack(newPlayedStack);
+        setLogs(newLogs);
+
+        if (gameWinner) {
+          setWinner(gameWinner);
+          setScreen('result');
+        }
+
+        broadcast({
+          type: 'UPDATE_STATE',
+          players: nextPlayers,
           turnIndex: nextTurn,
-          playedStack,
-          logs,
-          status,
-          winner
+          playedStack: newPlayedStack,
+          logs: newLogs,
+          winner: gameWinner
         });
       };
 
@@ -480,7 +522,7 @@
         let winners = [currentPlayers[winnerIdx].name];
         if (type === 'criminal') {
           currentPlayers.forEach(p => {
-            if ((p.hand && p.hand.some(c => c.id === 'scheme')) || (p.played && p.played.some(c => c.id === 'scheme'))) {
+            if (p.hand.some(c => c.id === 'scheme') || p.played.some(c => c.id === 'scheme')) {
               if (!winners.includes(p.name)) winners.push(p.name);
             }
           });
@@ -489,7 +531,6 @@
       };
 
       const getOrderedPlayersForTable = () => {
-        const players = gameState.players || [];
         const myIdx = players.findIndex(p => p.id === myId);
         if (myIdx === -1) return players;
         const result = [];
@@ -500,9 +541,7 @@
       };
 
       const orderedPlayers = getOrderedPlayersForTable();
-      const lastPlayed = gameState.playedStack && gameState.playedStack.length > 0 
-        ? gameState.playedStack[gameState.playedStack.length - 1] 
-        : null;
+      const lastPlayed = playedStack.length > 0 ? playedStack[playedStack.length - 1] : null;
 
       return (
         <div className="min-h-screen flex flex-col justify-between max-w-6xl mx-auto px-3 py-3 select-none">
@@ -516,7 +555,7 @@
                 <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
                   犯人は踊る
                   <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
-                    ver 1.21
+                    ver 1.3
                   </span>
                 </h1>
                 <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
@@ -543,9 +582,15 @@
             <div className="my-auto py-8 flex flex-col items-center">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-8 max-w-md w-full pop-shadow text-slate-900 text-center">
                 <div className="inline-block bg-rose-500 text-white text-xs font-black px-4 py-1.5 rounded-full border-2 border-slate-900 mb-4 shadow">
-                  3桁コードで即リアルタイム対戦！
+                  3桁コードで即対戦！
                 </div>
                 <h2 className="text-3xl font-black mb-6 tracking-wide">部屋を選んで遊ぼう！</h2>
+
+                {statusText && (
+                  <div className="mb-4 bg-slate-900 text-amber-400 font-bold text-xs py-2 px-3 rounded-xl border border-amber-400 animate-pulse">
+                    {statusText}
+                  </div>
+                )}
 
                 <div className="space-y-4 mb-6">
                   <div className="text-left">
@@ -563,10 +608,9 @@
                 <div className="grid grid-cols-1 gap-3">
                   <button
                     onClick={handleCreateRoom}
-                    disabled={isLoading}
                     className="w-full bg-rose-500 hover:bg-rose-400 text-white font-black py-4 rounded-2xl border-3 border-slate-900 pop-button text-base flex items-center justify-center gap-2"
                   >
-                    <i className="fa-solid fa-plus text-xl"></i> {isLoading ? '作成中...' : '部屋を作る (ホスト)'}
+                    <i className="fa-solid fa-plus text-xl"></i> 部屋を作る (ホスト)
                   </button>
 
                   <div className="relative my-2 flex items-center justify-center">
@@ -585,10 +629,9 @@
                     />
                     <button
                       onClick={handleJoinRoom}
-                      disabled={isLoading}
                       className="w-1/2 bg-sky-400 hover:bg-sky-300 text-slate-900 font-black py-3 rounded-2xl border-3 border-slate-900 pop-button text-sm flex items-center justify-center gap-1"
                     >
-                      <i className="fa-solid fa-right-to-bracket"></i> {isLoading ? '確認中...' : '参加する'}
+                      <i className="fa-solid fa-right-to-bracket"></i> 参加する
                     </button>
                   </div>
                 </div>
@@ -612,10 +655,10 @@
 
                 <div className="bg-amber-100 border-3 border-slate-900 rounded-2xl p-4 mb-6">
                   <h3 className="font-black text-xs text-slate-700 mb-3 flex items-center gap-2">
-                    <i className="fa-solid fa-users text-rose-500"></i> 参加メンバー ({(gameState.players || []).length}/5人)
+                    <i className="fa-solid fa-users text-rose-500"></i> 参加メンバー ({players.length}/5人)
                   </h3>
                   <div className="space-y-2">
-                    {(gameState.players || []).map((p, i) => (
+                    {players.map((p, i) => (
                       <div key={p.id} className="bg-white border-2 border-slate-900 px-3 py-2 rounded-xl flex justify-between items-center font-extrabold text-sm shadow-sm">
                         <span className="flex items-center gap-2">
                           <span className="w-6 h-6 rounded-full bg-rose-400 text-white text-xs flex items-center justify-center border border-slate-900">
@@ -655,10 +698,9 @@
               
               <div className="md:col-span-3 felt-table rounded-3xl p-4 flex flex-col justify-between min-h-[560px] relative overflow-hidden">
                 
-                {/* 1. 他プレイヤー配置 */}
                 <div className="flex justify-around items-center w-full z-10 pt-2">
                   {orderedPlayers.slice(1).map(p => {
-                    const isTurn = (gameState.players || [])[gameState.turnIndex]?.id === p.id;
+                    const isTurn = players[turnIndex]?.id === p.id;
                     return (
                       <div
                         key={p.id}
@@ -674,7 +716,7 @@
                         </div>
                         
                         <div className="flex gap-1 mt-1.5">
-                          {(p.hand || []).map((_, hIdx) => (
+                          {p.hand.map((_, hIdx) => (
                             <div
                               key={hIdx}
                               className="w-4 h-6 rounded bg-gradient-to-br from-indigo-800 to-rose-900 border border-amber-300/60 shadow flex items-center justify-center text-[8px] text-amber-300"
@@ -688,7 +730,6 @@
                   })}
                 </div>
 
-                {/* 2. 中央プレイエリア */}
                 <div className="my-auto flex flex-col items-center justify-center z-10">
                   <span className="text-[11px] font-black bg-slate-900/80 text-amber-300 px-3 py-1 rounded-full border border-amber-400/40 mb-2">
                     中央の場 (出したカード)
@@ -728,27 +769,26 @@
                   )}
                 </div>
 
-                {/* 3. 自手札エリア */}
                 <div className="bg-slate-950/90 border-3 border-amber-400 rounded-3xl p-3 z-10 shadow-2xl">
                   <div className="flex justify-between items-center mb-2 px-1">
                     <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
-                      <i className="fa-solid fa-hand text-rose-400"></i> あなたの手札 ({((gameState.players || []).find(p => p.id === myId)?.hand || []).length}枚)
+                      <i className="fa-solid fa-hand text-rose-400"></i> あなたの手札 ({players.find(p => p.id === myId)?.hand.length || 0}枚)
                     </span>
 
-                    {(gameState.players || [])[gameState.turnIndex]?.id === myId ? (
+                    {players[turnIndex]?.id === myId ? (
                       <span className="text-xs font-black bg-rose-500 text-white px-3 py-1 rounded-full border border-slate-900 animate-pulse">
                         あなたの番です！カードを選んで出してください
                       </span>
                     ) : (
                       <span className="text-xs font-bold text-slate-400">
-                        {(gameState.players || [])[gameState.turnIndex]?.name} の思考中...
+                        {players[turnIndex]?.name} の思考中...
                       </span>
                     )}
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {((gameState.players || []).find(p => p.id === myId)?.hand || []).map((card, cIdx) => {
-                      const isMyTurn = (gameState.players || [])[gameState.turnIndex]?.id === myId;
+                    {players.find(p => p.id === myId)?.hand.map((card, cIdx) => {
+                      const isMyTurn = players[turnIndex]?.id === myId;
                       return (
                         <div
                           key={card.instanceId}
@@ -783,13 +823,12 @@
 
               </div>
 
-              {/* LOG SIDEBAR */}
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-4 flex flex-col h-[560px] pop-shadow">
                 <h3 className="font-black text-xs text-slate-900 mb-3 flex items-center gap-1.5 border-b-2 border-slate-900 pb-2">
                   <i className="fa-solid fa-list-ul text-rose-500"></i> ゲーム進行ログ
                 </h3>
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar text-xs font-bold">
-                  {(gameState.logs || []).map((log, idx) => (
+                  {logs.map((log, idx) => (
                     <div key={idx} className="bg-white border-2 border-slate-900 p-2.5 rounded-xl text-slate-900 shadow-sm leading-relaxed">
                       {log}
                     </div>
@@ -809,12 +848,12 @@
                 </p>
 
                 <div className="space-y-2 mb-4">
-                  {(gameState.players || []).filter(p => p.id !== myId && p.hand && p.hand.length > 0).map(p => (
+                  {players.filter(p => p.id !== myId && p.hand.length > 0).map(p => (
                     <button
                       key={p.id}
                       onClick={() => {
-                        const myIdx = (gameState.players || []).findIndex(pl => pl.id === myId);
-                        processCardPlay(myIdx, pendingTargetCard.cardIdx, p.id);
+                        const myIdx = players.findIndex(pl => pl.id === myId);
+                        submitPlayCard(myIdx, pendingTargetCard.cardIdx, p.id);
                       }}
                       className="w-full bg-white hover:bg-rose-500 hover:text-white font-black py-3 px-4 rounded-2xl border-3 border-slate-900 pop-button text-sm flex justify-between items-center transition"
                     >
@@ -834,14 +873,14 @@
             </div>
           )}
 
-          {screen === 'result' && gameState.winner && (
+          {screen === 'result' && winner && (
             <div className="my-auto py-8 flex flex-col items-center">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-8 max-w-md w-full pop-shadow text-center text-slate-900">
                 <div className="text-6xl mb-2">🏆</div>
                 <h2 className="text-3xl font-black mb-2 text-rose-600">ゲーム決着！</h2>
                 <div className="bg-white border-3 border-slate-900 p-4 rounded-2xl mb-6">
                   <span className="text-xs font-black text-slate-500 block mb-1">勝利者</span>
-                  <span className="text-xl font-black text-slate-900">{gameState.winner.names}</span>
+                  <span className="text-xl font-black text-slate-900">{winner.names}</span>
                 </div>
 
                 <button
