@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る ver 1.3 - オンライン対戦</title>
+  <title>犯人は踊る ver 1.4 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -156,6 +156,12 @@
       const peerRef = useRef(null);
       const connectionsRef = useRef([]);
 
+      // 最新状態を常に参照するためのRef（ホスト用）
+      const stateRef = useRef({ players: [], turnIndex: 0, playedStack: [], logs: [] });
+      useEffect(() => {
+        stateRef.current = { players, turnIndex, playedStack, logs };
+      }, [players, turnIndex, playedStack, logs]);
+
       useEffect(() => {
         if (logEndRef.current) {
           logEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -193,7 +199,7 @@
         peer.on('error', (err) => {
           setStatusText('');
           if (err.type === 'unavailable-id') {
-            handleCreateRoom(); // ID被りの場合は再生成
+            handleCreateRoom();
           } else {
             alert('接続エラーが発生しました。時間を置いて再度お試しください。');
           }
@@ -249,12 +255,12 @@
 
       const handleHostReceiveData = (data, conn) => {
         if (data.type === 'JOIN') {
-          setPlayers(prev => {
-            if (prev.some(p => p.id === data.id)) return prev;
-            const updated = [...prev, { id: data.id, name: data.name, hand: [], played: [] }];
+          const currentPlayers = stateRef.current.players;
+          if (!currentPlayers.some(p => p.id === data.id)) {
+            const updated = [...currentPlayers, { id: data.id, name: data.name, hand: [], played: [] }];
+            setPlayers(updated);
             broadcast({ type: 'SYNC_LOBBY', players: updated });
-            return updated;
-          });
+          }
         } else if (data.type === 'PLAY_CARD') {
           processCardPlay(data.playerIdx, data.cardIdx, data.targetId);
         }
@@ -360,47 +366,40 @@
       };
 
       const processCardPlay = (playerIdx, cardIdx, targetId) => {
-        const currentPlayer = players[playerIdx];
+        const curState = stateRef.current;
+        const currentPlayers = JSON.parse(JSON.stringify(curState.players));
+        const currentPlayer = currentPlayers[playerIdx];
         const card = currentPlayer.hand[cardIdx];
 
-        let newLogs = [...logs, `📢 ${currentPlayer.name} が【${card.name}】を出しました！`];
+        let newLogs = [...curState.logs, `📢 ${currentPlayer.name} が【${card.name}】を出しました！`];
 
-        const newHand = [...currentPlayer.hand];
-        newHand.splice(cardIdx, 1);
+        currentPlayer.hand.splice(cardIdx, 1);
+        currentPlayer.played = [...(currentPlayer.played || []), card];
 
-        let nextPlayers = [...players];
-        nextPlayers[playerIdx] = {
-          ...currentPlayer,
-          hand: newHand,
-          played: [...currentPlayer.played, card]
-        };
-
-        const newPlayedStack = [...playedStack, { card, playedBy: currentPlayer.name }];
-
+        const newPlayedStack = [...curState.playedStack, { card, playedBy: currentPlayer.name }];
         let gameWinner = null;
-        const actor = nextPlayers[playerIdx];
 
         switch (card.id) {
           case 'first_discoverer':
-            newLogs.push(`🔍 事件発生！${actor.name} が遺体を発見しました。`);
+            newLogs.push(`🔍 事件発生！${currentPlayer.name} が遺体を発見しました。`);
             break;
 
           case 'criminal':
-            gameWinner = calculateWinner('criminal', playerIdx, nextPlayers);
-            newLogs.push(`😈 犯人が踊りきった！【犯人】を出した ${actor.name} の勝利！`);
+            gameWinner = calculateWinner('criminal', playerIdx, currentPlayers);
+            newLogs.push(`😈 犯人が踊りきった！【犯人】を出した ${currentPlayer.name} の勝利！`);
             break;
 
           case 'detective':
             if (targetId) {
-              const target = nextPlayers.find(p => p.id === targetId);
-              newLogs.push(`🕵️ ${actor.name} が ${target.name} に「あなたが犯人ですか？」と追及！`);
+              const target = currentPlayers.find(p => p.id === targetId);
+              newLogs.push(`🕵️ ${currentPlayer.name} が ${target.name} に「あなたが犯人ですか？」と追及！`);
 
               const hasCriminal = target.hand.some(c => c.id === 'criminal');
               const hasAlibi = target.hand.some(c => c.id === 'alibi');
 
               if (hasCriminal && !hasAlibi) {
                 newLogs.push(`🎯 ${target.name} 「参りました…私が犯人です！」`);
-                gameWinner = calculateWinner('detective', playerIdx, nextPlayers);
+                gameWinner = calculateWinner('detective', playerIdx, currentPlayers);
               } else if (hasCriminal && hasAlibi) {
                 newLogs.push(`🛡️ ${target.name} 「アリバイがあります！犯人ではありません。」`);
               } else {
@@ -411,79 +410,79 @@
 
           case 'dog':
             if (targetId) {
-              const target = nextPlayers.find(p => p.id === targetId);
+              const target = currentPlayers.find(p => p.id === targetId);
               if (target.hand.length > 0) {
                 const stolenIdx = Math.floor(Math.random() * target.hand.length);
                 const stolen = target.hand[stolenIdx];
 
                 target.hand.splice(stolenIdx, 1);
-                actor.hand.push(stolen);
+                currentPlayer.hand.push(stolen);
 
-                newLogs.push(`🐕 ${actor.name} の「いぬ」が ${target.name} から【${stolen.name}】を引き抜いた！`);
+                newLogs.push(`🐕 ${currentPlayer.name} の「いぬ」が ${target.name} から【${stolen.name}】を引き抜いた！`);
 
                 if (stolen.id === 'criminal') {
                   newLogs.push(`🎉 「いぬ」が犯人カードをクンクン当てました！`);
-                  gameWinner = calculateWinner('dog', playerIdx, nextPlayers);
+                  gameWinner = calculateWinner('dog', playerIdx, currentPlayers);
                 }
               }
             }
             break;
 
           case 'boy':
-            const crim = nextPlayers.find(p => p.hand.some(c => c.id === 'criminal'));
+            const crim = currentPlayers.find(p => p.hand.some(c => c.id === 'criminal'));
             newLogs.push(crim ? `👁️ 「少年」が目撃した！犯人は… ${crim.name} だ！（非公開情報）` : `👁️ 「少年」は何も目撃できなかった…`);
             break;
 
           case 'trade':
             if (targetId) {
-              const target = nextPlayers.find(p => p.id === targetId);
-              if (actor.hand.length > 0 && target.hand.length > 0) {
-                const actorCard = actor.hand.pop();
+              const target = currentPlayers.find(p => p.id === targetId);
+              if (currentPlayer.hand.length > 0 && target.hand.length > 0) {
+                const actorCard = currentPlayer.hand.pop();
                 const targetCard = target.hand.pop();
-                actor.hand.push(targetCard);
+                currentPlayer.hand.push(targetCard);
                 target.hand.push(actorCard);
-                newLogs.push(`🤝 ${actor.name} と ${target.name} がカードを1枚交換しました。`);
+                newLogs.push(`🤝 ${currentPlayer.name} と ${target.name} がカードを1枚交換しました。`);
               }
             }
             break;
 
           case 'rumor':
             newLogs.push(`🗣️ うわすが流れた！全員が右隣の人の手札から1枚引き抜きます。`);
-            const pCount = nextPlayers.length;
+            const pCount = currentPlayers.length;
             const stolenCards = [];
             for (let i = 0; i < pCount; i++) {
               const rightIdx = (i + 1) % pCount;
-              const rightHand = nextPlayers[rightIdx].hand;
+              const rightHand = currentPlayers[rightIdx].hand;
               if (rightHand.length > 0) {
                 const randIdx = Math.floor(Math.random() * rightHand.length);
                 stolenCards.push({ from: rightIdx, to: i, card: rightHand[randIdx], randIdx });
               }
             }
             stolenCards.forEach(item => {
-              nextPlayers[item.from].hand.splice(item.randIdx, 1);
+              currentPlayers[item.from].hand.splice(item.randIdx, 1);
             });
             stolenCards.forEach(item => {
-              nextPlayers[item.to].hand.push(item.card);
+              currentPlayers[item.to].hand.push(item.card);
             });
             break;
 
           case 'information':
             newLogs.push(`🔄 情報操作！全員が左隣の人にカードを1枚ずつ渡しました。`);
-            const countP = nextPlayers.length;
+            const countP = currentPlayers.length;
             const passedCards = [];
             for (let i = 0; i < countP; i++) {
               const leftIdx = (i - 1 + countP) % countP;
-              const pHand = nextPlayers[i].hand;
+              const pHand = currentPlayers[i].hand;
               if (pHand.length > 0) {
                 passedCards.push({ from: i, to: leftIdx, card: pHand[0] });
               }
             }
             passedCards.forEach(item => {
-              const idx = nextPlayers[item.from].hand.findIndex(c => c.instanceId === item.card.instanceId);
-              if (idx !== -1) nextPlayers[item.from].hand.splice(idx, 1);
+              const idx = currentPlayers[item.from].hand.findIndex(c => c.instanceId === item.card.instanceId);
+              if (idx !== -1) currentPlayers[item.from].hand.splice(idx, 1);
             });
             passedCards.forEach(item => {
-              nextPlayers[item.to].hand.push(item.card);
+              currentPlayers[item.to].hand.push(item.card);
             });
             break;
 
@@ -491,14 +490,14 @@
             break;
         }
 
-        let nextTurn = (turnIndex + 1) % players.length;
+        let nextTurn = (curState.turnIndex + 1) % currentPlayers.length;
         let loopCount = 0;
-        while (nextPlayers[nextTurn].hand.length === 0 && loopCount < players.length) {
-          nextTurn = (nextTurn + 1) % players.length;
+        while (currentPlayers[nextTurn].hand.length === 0 && loopCount < currentPlayers.length) {
+          nextTurn = (nextTurn + 1) % currentPlayers.length;
           loopCount++;
         }
 
-        setPlayers(nextPlayers);
+        setPlayers(currentPlayers);
         setTurnIndex(nextTurn);
         setPlayedStack(newPlayedStack);
         setLogs(newLogs);
@@ -510,7 +509,7 @@
 
         broadcast({
           type: 'UPDATE_STATE',
-          players: nextPlayers,
+          players: currentPlayers,
           turnIndex: nextTurn,
           playedStack: newPlayedStack,
           logs: newLogs,
@@ -555,7 +554,7 @@
                 <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
                   犯人は踊る
                   <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
-                    ver 1.3
+                    ver 1.4
                   </span>
                 </h1>
                 <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
