@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る ver 1.4 - オンライン対戦</title>
+  <title>犯人は踊る ver 1.5 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -77,6 +77,75 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
+    // --- Web Audio API によるサウンドシステム ---
+    let audioCtx = null;
+    let bgmInterval = null;
+
+    const getAudioContext = () => {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    };
+
+    const playTone = (freq, duration, type = 'sine', gainVal = 0.1) => {
+      try {
+        const ctx = getAudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(gainVal, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+      } catch (e) {}
+    };
+
+    const SOUNDS = {
+      playCard: () => {
+        playTone(440, 0.1, 'triangle', 0.15);
+        setTimeout(() => playTone(880, 0.15, 'sine', 0.15), 50);
+      },
+      swapCard: () => {
+        playTone(300, 0.08, 'sawtooth', 0.1);
+        setTimeout(() => playTone(600, 0.08, 'sawtooth', 0.1), 80);
+        setTimeout(() => playTone(450, 0.12, 'sine', 0.1), 160);
+      },
+      win: () => {
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((freq, idx) => {
+          setTimeout(() => playTone(freq, 0.3, 'triangle', 0.2), idx * 120);
+        });
+      },
+      detective: () => {
+        playTone(200, 0.2, 'sawtooth', 0.2);
+        setTimeout(() => playTone(150, 0.3, 'sawtooth', 0.2), 150);
+      }
+    };
+
+    const startBGM = () => {
+      if (bgmInterval) return;
+      const notes = [261.63, 329.63, 392.00, 329.63, 293.66, 349.23, 440.00, 349.23];
+      let step = 0;
+      bgmInterval = setInterval(() => {
+        playTone(notes[step % notes.length], 0.2, 'sine', 0.03);
+        step++;
+      }, 400);
+    };
+
+    const stopBGM = () => {
+      if (bgmInterval) {
+        clearInterval(bgmInterval);
+        bgmInterval = null;
+      }
+    };
+
     const CARD_TYPES = {
       FIRST_DISCOVERER: { 
         id: 'first_discoverer', name: '第一発見者', bg: 'bg-gradient-to-b from-amber-300 to-amber-500', 
@@ -142,6 +211,7 @@
       const [playerName, setPlayerName] = useState('');
       const [isHost, setIsHost] = useState(false);
       const [statusText, setStatusText] = useState('');
+      const [isBgmOn, setIsBgmOn] = useState(false);
       
       const [players, setPlayers] = useState([]);
       const [myId, setMyId] = useState(null);
@@ -156,7 +226,6 @@
       const peerRef = useRef(null);
       const connectionsRef = useRef([]);
 
-      // 最新状態を常に参照するためのRef（ホスト用）
       const stateRef = useRef({ players: [], turnIndex: 0, playedStack: [], logs: [] });
       useEffect(() => {
         stateRef.current = { players, turnIndex, playedStack, logs };
@@ -168,9 +237,21 @@
         }
       }, [logs]);
 
+      const toggleBGM = () => {
+        getAudioContext();
+        if (isBgmOn) {
+          stopBGM();
+          setIsBgmOn(false);
+        } else {
+          startBGM();
+          setIsBgmOn(true);
+        }
+      };
+
       const generate3DigitCode = () => Math.floor(100 + Math.random() * 900).toString();
 
       const handleCreateRoom = () => {
+        getAudioContext();
         if (!playerName.trim()) return alert('名前を入力してください！');
         setStatusText('部屋を作成中...');
         const code = generate3DigitCode();
@@ -207,6 +288,7 @@
       };
 
       const handleJoinRoom = () => {
+        getAudioContext();
         if (!playerName.trim()) return alert('名前を入力してください！');
         if (inputCode.trim().length !== 3) return alert('3桁の部屋番号を入力してください！');
 
@@ -275,14 +357,21 @@
           setPlayedStack(data.playedStack || []);
           setLogs(data.logs);
           setScreen('game');
+          SOUNDS.playCard();
         } else if (data.type === 'UPDATE_STATE') {
           setPlayers(data.players);
           setTurnIndex(data.turnIndex);
           setPlayedStack(data.playedStack || []);
           setLogs(data.logs);
+          if (data.soundEffect) {
+            if (SOUNDS[data.soundEffect]) SOUNDS[data.soundEffect]();
+          } else {
+            SOUNDS.playCard();
+          }
           if (data.winner) {
             setWinner(data.winner);
             setScreen('result');
+            SOUNDS.win();
           }
         }
       };
@@ -331,6 +420,7 @@
         setPlayedStack([]);
         setLogs(initialLogs);
         setScreen('game');
+        SOUNDS.playCard();
 
         broadcast({
           type: 'START_GAME',
@@ -372,6 +462,7 @@
         const card = currentPlayer.hand[cardIdx];
 
         let newLogs = [...curState.logs, `📢 ${currentPlayer.name} が【${card.name}】を出しました！`];
+        let soundEffect = 'playCard';
 
         currentPlayer.hand.splice(cardIdx, 1);
         currentPlayer.played = [...(currentPlayer.played || []), card];
@@ -390,6 +481,7 @@
             break;
 
           case 'detective':
+            soundEffect = 'detective';
             if (targetId) {
               const target = currentPlayers.find(p => p.id === targetId);
               newLogs.push(`🕵️ ${currentPlayer.name} が ${target.name} に「あなたが犯人ですか？」と追及！`);
@@ -409,6 +501,7 @@
             break;
 
           case 'dog':
+            soundEffect = 'swapCard';
             if (targetId) {
               const target = currentPlayers.find(p => p.id === targetId);
               if (target.hand.length > 0) {
@@ -434,9 +527,11 @@
             break;
 
           case 'trade':
+            soundEffect = 'swapCard';
             if (targetId) {
               const target = currentPlayers.find(p => p.id === targetId);
               if (currentPlayer.hand.length > 0 && target.hand.length > 0) {
+                // アクターとターゲットの手札末尾を交換
                 const actorCard = currentPlayer.hand.pop();
                 const targetCard = target.hand.pop();
                 currentPlayer.hand.push(targetCard);
@@ -447,42 +542,62 @@
             break;
 
           case 'rumor':
+            soundEffect = 'swapCard';
             newLogs.push(`🗣️ うわすが流れた！全員が右隣の人の手札から1枚引き抜きます。`);
             const pCount = currentPlayers.length;
-            const stolenCards = [];
+            const stolenList = [];
+
+            // 各自が右隣から引き抜くカードを事前選定
             for (let i = 0; i < pCount; i++) {
               const rightIdx = (i + 1) % pCount;
               const rightHand = currentPlayers[rightIdx].hand;
               if (rightHand.length > 0) {
                 const randIdx = Math.floor(Math.random() * rightHand.length);
-                stolenCards.push({ from: rightIdx, to: i, card: rightHand[randIdx], randIdx });
+                stolenList.push({
+                  fromIdx: rightIdx,
+                  toIdx: i,
+                  card: rightHand[randIdx],
+                  randIdx
+                });
               }
             }
-            stolenCards.forEach(item => {
-              currentPlayers[item.from].hand.splice(item.randIdx, 1);
+            // 削除
+            stolenList.forEach(item => {
+              const idx = currentPlayers[item.fromIdx].hand.findIndex(c => c.instanceId === item.card.instanceId);
+              if (idx !== -1) currentPlayers[item.fromIdx].hand.splice(idx, 1);
             });
-            stolenCards.forEach(item => {
-              currentPlayers[item.to].hand.push(item.card);
+            // 追加
+            stolenList.forEach(item => {
+              currentPlayers[item.toIdx].hand.push(item.card);
             });
             break;
 
           case 'information':
+            soundEffect = 'swapCard';
             newLogs.push(`🔄 情報操作！全員が左隣の人にカードを1枚ずつ渡しました。`);
             const countP = currentPlayers.length;
-            const passedCards = [];
+            const passList = [];
+
+            // 各自が左隣に渡すカードを選定（各手札の最初の1枚）
             for (let i = 0; i < countP; i++) {
               const leftIdx = (i - 1 + countP) % countP;
               const pHand = currentPlayers[i].hand;
               if (pHand.length > 0) {
-                passedCards.push({ from: i, to: leftIdx, card: pHand[0] });
+                passList.push({
+                  fromIdx: i,
+                  toIdx: leftIdx,
+                  card: pHand[0]
+                });
               }
             }
-            passedCards.forEach(item => {
-              const idx = currentPlayers[item.from].hand.findIndex(c => c.instanceId === item.card.instanceId);
-              if (idx !== -1) currentPlayers[item.from].hand.splice(idx, 1);
+            // 削除
+            passList.forEach(item => {
+              const idx = currentPlayers[item.fromIdx].hand.findIndex(c => c.instanceId === item.card.instanceId);
+              if (idx !== -1) currentPlayers[item.fromIdx].hand.splice(idx, 1);
             });
-            passedCards.forEach(item => {
-              currentPlayers[item.to].hand.push(item.card);
+            // 追加
+            passList.forEach(item => {
+              currentPlayers[item.toIdx].hand.push(item.card);
             });
             break;
 
@@ -502,9 +617,12 @@
         setPlayedStack(newPlayedStack);
         setLogs(newLogs);
 
+        if (SOUNDS[soundEffect]) SOUNDS[soundEffect]();
+
         if (gameWinner) {
           setWinner(gameWinner);
           setScreen('result');
+          SOUNDS.win();
         }
 
         broadcast({
@@ -513,6 +631,7 @@
           turnIndex: nextTurn,
           playedStack: newPlayedStack,
           logs: newLogs,
+          soundEffect,
           winner: gameWinner
         });
       };
@@ -554,7 +673,7 @@
                 <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
                   犯人は踊る
                   <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
-                    ver 1.4
+                    ver 1.5
                   </span>
                 </h1>
                 <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
@@ -562,11 +681,21 @@
             </div>
 
             <div className="flex items-center gap-2">
+              <button 
+                onClick={toggleBGM}
+                className={`border-2 border-slate-900 px-3 py-1 rounded-xl font-extrabold text-xs shadow transition ${
+                  isBgmOn ? 'bg-emerald-400 text-slate-900' : 'bg-slate-200 text-slate-700'
+                }`}
+              >
+                <i className="fa-solid fa-music"></i> BGM {isBgmOn ? 'ON' : 'OFF'}
+              </button>
+
               {roomCode && (
                 <div className="bg-slate-900 text-amber-400 font-black px-3 py-1 rounded-xl text-xs border-2 border-amber-500">
                   部屋番号: <span className="text-sm font-mono tracking-widest">{roomCode}</span>
                 </div>
               )}
+
               <button 
                 onClick={() => setShowRules(true)}
                 className="bg-sky-400 hover:bg-sky-300 text-slate-900 border-2 border-slate-900 px-3 py-1 rounded-xl font-extrabold text-xs shadow"
