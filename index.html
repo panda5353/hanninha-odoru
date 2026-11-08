@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>犯人は踊る ver 1.8 - オンライン対戦</title>
+  <title>犯人は踊る ver 1.9 - オンライン対戦</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -122,10 +122,6 @@
       detective: () => {
         playTone(200, 0.2, 'sawtooth', 0.2);
         setTimeout(() => playTone(150, 0.3, 'sawtooth', 0.2), 150);
-      },
-      tension: () => {
-        playTone(180, 0.4, 'sawtooth', 0.15);
-        setTimeout(() => playTone(220, 0.4, 'sawtooth', 0.15), 200);
       }
     };
 
@@ -170,7 +166,7 @@
       SCHEME: { 
         id: 'scheme', name: 'たくらみ', bg: 'bg-gradient-to-b from-purple-400 to-purple-600', 
         border: 'border-purple-900', text: 'text-white', icon: 'fa-masks-theater', 
-        tag: '共犯者', desc: '犯人が勝利したとき、自分も一緒に勝利！' 
+        tag: '共犯者', desc: '場に出しておくと、犯人が勝利したとき自分も一緒に勝利！' 
       },
       DOG: { 
         id: 'dog', name: 'いぬ', bg: 'bg-gradient-to-b from-orange-300 to-orange-500', 
@@ -180,7 +176,12 @@
       BOY: { 
         id: 'boy', name: '少年', bg: 'bg-gradient-to-b from-cyan-200 to-cyan-400', 
         border: 'border-cyan-600', text: 'text-cyan-950', icon: 'fa-child-reaching', 
-        tag: '目撃者', desc: '誰が犯人カードを持っているかを目撃できる。' 
+        tag: '知る人', desc: '誰が「犯人」カードを持っているかを知ることができる。' 
+      },
+      WITNESS: { 
+        id: 'witness', name: '目撃者', bg: 'bg-gradient-to-b from-indigo-300 to-indigo-500', 
+        border: 'border-indigo-800', text: 'text-indigo-950', icon: 'fa-eye', 
+        tag: '全手札閲覧', desc: '指定した1人の手札をすべてこっそり見ることができる。' 
       },
       CITIZEN: { 
         id: 'citizen', name: '一般人', bg: 'bg-gradient-to-b from-slate-200 to-slate-400', 
@@ -202,6 +203,59 @@
         border: 'border-yellow-700', text: 'text-yellow-950', icon: 'fa-handshake', 
         tag: '1対1交換', desc: '指定したプレイヤーとカードを1枚交換する。' 
       }
+    };
+
+    // 人数別カード構築ルール
+    const buildDeckForPlayerCount = (playerCount) => {
+      let required = [];
+      let extraCount = 0;
+
+      if (playerCount === 3) {
+        required = [CARD_TYPES.FIRST_DISCOVERER, CARD_TYPES.CRIMINAL, CARD_TYPES.DETECTIVE, CARD_TYPES.ALIBI];
+        extraCount = 8;
+      } else if (playerCount === 4) {
+        required = [CARD_TYPES.FIRST_DISCOVERER, CARD_TYPES.CRIMINAL, CARD_TYPES.DETECTIVE, CARD_TYPES.ALIBI, CARD_TYPES.SCHEME];
+        extraCount = 11;
+      } else if (playerCount === 5) {
+        required = [CARD_TYPES.FIRST_DISCOVERER, CARD_TYPES.CRIMINAL, CARD_TYPES.DETECTIVE, CARD_TYPES.ALIBI, CARD_TYPES.ALIBI, CARD_TYPES.SCHEME];
+        extraCount = 14;
+      } else if (playerCount === 6) {
+        required = [CARD_TYPES.FIRST_DISCOVERER, CARD_TYPES.CRIMINAL, CARD_TYPES.DETECTIVE, CARD_TYPES.DETECTIVE, CARD_TYPES.ALIBI, CARD_TYPES.ALIBI, CARD_TYPES.SCHEME, CARD_TYPES.SCHEME];
+        extraCount = 16;
+      } else if (playerCount >= 7) {
+        required = [CARD_TYPES.FIRST_DISCOVERER, CARD_TYPES.CRIMINAL, CARD_TYPES.DETECTIVE, CARD_TYPES.DETECTIVE, CARD_TYPES.ALIBI, CARD_TYPES.ALIBI, CARD_TYPES.ALIBI, CARD_TYPES.SCHEME, CARD_TYPES.SCHEME];
+        extraCount = 19;
+      }
+
+      //  restanteプール作成 (全37枚プールから固定枠を除外)
+      let pool = [
+        CARD_TYPES.DOG, CARD_TYPES.BOY,
+        CARD_TYPES.CITIZEN, CARD_TYPES.CITIZEN,
+        CARD_TYPES.SCHEME, CARD_TYPES.SCHEME,
+        CARD_TYPES.WITNESS, CARD_TYPES.WITNESS, CARD_TYPES.WITNESS,
+        CARD_TYPES.INFORMATION, CARD_TYPES.INFORMATION, CARD_TYPES.INFORMATION,
+        CARD_TYPES.DETECTIVE, CARD_TYPES.DETECTIVE, CARD_TYPES.DETECTIVE, CARD_TYPES.DETECTIVE,
+        CARD_TYPES.RUMOR, CARD_TYPES.RUMOR, CARD_TYPES.RUMOR, CARD_TYPES.RUMOR,
+        CARD_TYPES.ALIBI, CARD_TYPES.ALIBI, CARD_TYPES.ALIBI, CARD_TYPES.ALIBI, CARD_TYPES.ALIBI,
+        CARD_TYPES.TRADE, CARD_TYPES.TRADE, CARD_TYPES.TRADE, CARD_TYPES.TRADE, CARD_TYPES.TRADE
+      ];
+
+      // 固定枠で消費したタイプをプールから除去
+      required.forEach(req => {
+        const idx = pool.findIndex(p => p.id === req.id);
+        if (idx !== -1) pool.splice(idx, 1);
+      });
+
+      // プールから余剰枠をランダムピック
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+
+      const selectedExtra = pool.slice(0, extraCount);
+      const finalDeckTypes = [...required, ...selectedExtra];
+
+      return finalDeckTypes.map(type => ({ ...type, instanceId: Math.random() }));
     };
 
     function App() {
@@ -227,8 +281,9 @@
       
       // 中央演出用ポップアップステート
       const [centralAnnouncement, setCentralAnnouncement] = useState(null); 
-      // うわさ結果専用ステート（全員に個別表示）
+      // うわさ・目撃者結果専用ステート（全員に個別表示）
       const [rumorResultNotice, setRumorResultNotice] = useState(null);
+      const [witnessNotice, setWitnessNotice] = useState(null);
 
       // 個別アクション用ステート
       const [tradeState, setTradeState] = useState(null);
@@ -394,6 +449,8 @@
           setCentralAnnouncement(data.announcement);
         } else if (data.type === 'RUMOR_NOTICE') {
           setRumorResultNotice(data.notice);
+        } else if (data.type === 'WITNESS_NOTICE') {
+          setWitnessNotice(data.notice);
         }
       };
 
@@ -404,24 +461,9 @@
         }
 
         const count = players.length;
-        let deck = [];
-        deck.push({ ...CARD_TYPES.FIRST_DISCOVERER, instanceId: Math.random() });
-        deck.push({ ...CARD_TYPES.CRIMINAL, instanceId: Math.random() });
-        deck.push({ ...CARD_TYPES.DETECTIVE, instanceId: Math.random() });
-        deck.push({ ...CARD_TYPES.ALIBI, instanceId: Math.random() });
-        deck.push({ ...CARD_TYPES.SCHEME, instanceId: Math.random() });
+        let deck = buildDeckForPlayerCount(count);
 
-        const fillerTypes = [
-          CARD_TYPES.CITIZEN, CARD_TYPES.RUMOR, CARD_TYPES.INFORMATION,
-          CARD_TYPES.TRADE, CARD_TYPES.DOG, CARD_TYPES.BOY,
-          CARD_TYPES.DETECTIVE, CARD_TYPES.ALIBI
-        ];
-
-        while (deck.length < count * 4) {
-          const randType = fillerTypes[Math.floor(Math.random() * fillerTypes.length)];
-          deck.push({ ...randType, instanceId: Math.random() });
-        }
-
+        // デッキシャッフル
         for (let i = deck.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -458,7 +500,7 @@
 
         const card = players[myIdx].hand[cardIdx];
 
-        if (['detective', 'dog', 'trade'].includes(card.id)) {
+        if (['detective', 'dog', 'trade', 'witness'].includes(card.id)) {
           setPendingTargetCard({ cardIdx, card });
           return;
         }
@@ -513,7 +555,7 @@
               title: 'ゲーム決着！',
               actor: currentPlayer.name,
               action: '犯人カードを出し切った',
-              result: `勝者: ${winner ? winner.names : currentPlayer.name}`,
+              result: `勝者: ${gameWinner.names}`,
               icon: 'fa-user-ninja'
             };
             break;
@@ -541,6 +583,32 @@
                 action: `${target.name} を指名して追及！`,
                 result: resText,
                 icon: 'fa-user-tie'
+              };
+            }
+            break;
+
+          case 'witness':
+            if (targetId) {
+              const target = currentPlayers.find(p => p.id === targetId);
+              newLogs.push(`👁️ ${currentPlayer.name} が ${target.name} の手札を目撃した！`);
+              
+              const notice = {
+                targetName: target.name,
+                cards: target.hand
+              };
+
+              if (currentPlayer.id === myId) {
+                setWitnessNotice(notice);
+              } else {
+                sendToClient(currentPlayer.id, { type: 'WITNESS_NOTICE', notice });
+              }
+
+              announcementData = {
+                title: '目撃者発動',
+                actor: currentPlayer.name,
+                action: `${target.name} の全手札を閲覧中...`,
+                result: '（目撃者のみが手札内容を確認しています）',
+                icon: 'fa-eye'
               };
             }
             break;
@@ -582,26 +650,13 @@
               ? `👁️【目撃情報】犯人カードを持っているのは [ ${crim.name} ] です！`
               : `👁️【目撃情報】犯人カードを持っている人はいません。`;
             
-            if (currentPlayer.id === myId) {
-              setCentralAnnouncement({
-                title: '少年の目撃証言',
-                actor: currentPlayer.name,
-                action: '少年カードを発動',
-                result: boyMessage,
-                icon: 'fa-child-reaching'
-              });
-            } else {
-              sendToClient(currentPlayer.id, { 
-                type: 'CENTRAL_ANNOUNCEMENT', 
-                announcement: {
-                  title: '少年の目撃証言',
-                  actor: currentPlayer.name,
-                  action: '少年カードを発動',
-                  result: boyMessage,
-                  icon: 'fa-child-reaching'
-                } 
-              });
-            }
+            announcementData = {
+              title: '少年の証言',
+              actor: currentPlayer.name,
+              action: '少年カードを発動',
+              result: boyMessage,
+              icon: 'fa-child-reaching'
+            };
             break;
 
           case 'trade':
@@ -654,7 +709,6 @@
               currentPlayers[item.toIdx].hand.push(item.card);
             });
 
-            // 各自に中央ポップアップとして「うわさの結果」を送信・表示
             currentPlayers.forEach((p, idx) => {
               const gained = stolenList.find(s => s.toIdx === idx);
               const lost = stolenList.find(s => s.fromIdx === idx);
@@ -743,6 +797,20 @@
             announcement: announcementData
           });
         }
+      };
+
+      // --- 【たくらみ】を出した人を含める勝利計算ロジック ---
+      const calculateWinner = (type, winnerIdx, currentPlayers) => {
+        let winners = [currentPlayers[winnerIdx].name];
+        if (type === 'criminal') {
+          currentPlayers.forEach(p => {
+            // 場に「たくらみ」を出しているプレイヤーのみを陣営勝利に追加！
+            if (p.played && p.played.some(c => c.id === 'scheme')) {
+              if (!winners.includes(p.name)) winners.push(p.name);
+            }
+          });
+        }
+        return { type, names: winners.join(', ') };
       };
 
       // --- 【取り引き】カード提出処理 ---
@@ -899,18 +967,6 @@
         }
       };
 
-      const calculateWinner = (type, winnerIdx, currentPlayers) => {
-        let winners = [currentPlayers[winnerIdx].name];
-        if (type === 'criminal') {
-          currentPlayers.forEach(p => {
-            if (p.hand.some(c => c.id === 'scheme') || p.played.some(c => c.id === 'scheme')) {
-              if (!winners.includes(p.name)) winners.push(p.name);
-            }
-          });
-        }
-        return { type, names: winners.join(', ') };
-      };
-
       const getOrderedPlayersForTable = () => {
         const myIdx = players.findIndex(p => p.id === myId);
         if (myIdx === -1) return players;
@@ -937,7 +993,7 @@
                 <h1 className="text-lg font-black text-slate-900 tracking-wider flex items-center gap-2">
                   犯人は踊る
                   <span className="text-[10px] bg-slate-900 text-amber-400 font-mono px-2 py-0.5 rounded-full border border-amber-400/50 shadow-sm">
-                    ver 1.8
+                    ver 1.9
                   </span>
                 </h1>
                 <p className="text-[9px] text-amber-950 font-extrabold">REAL CARD TABLE EDITION</p>
@@ -1047,7 +1103,7 @@
 
                 <div className="bg-amber-100 border-3 border-slate-900 rounded-2xl p-4 mb-6">
                   <h3 className="font-black text-xs text-slate-700 mb-3 flex items-center gap-2">
-                    <i className="fa-solid fa-users text-rose-500"></i> 参加メンバー ({players.length}/5人)
+                    <i className="fa-solid fa-users text-rose-500"></i> 参加メンバー ({players.length}/7人)
                   </h3>
                   <div className="space-y-2">
                     {players.map((p, i) => (
@@ -1227,7 +1283,7 @@
             </div>
           )}
 
-          {/* 全員向け中央アクション結果ポップアップ (探偵・いぬ・一般カードなど) */}
+          {/* 全員向け中央アクション結果ポップアップ */}
           {centralAnnouncement && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-md w-full pop-shadow text-slate-900 text-center animate-pop-card">
@@ -1258,7 +1314,37 @@
             </div>
           )}
 
-          {/* 【うわさ】結果の一時中央ポップアップ (全員に個別の取得・喪失を表示) */}
+          {/* 【目撃者】専用の中央全手札閲覧モーダル (自分だけ) */}
+          {witnessNotice && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-md w-full pop-shadow text-slate-900 text-center animate-pop-card">
+                <div className="text-4xl mb-1">👁️</div>
+                <h3 className="font-black text-lg mb-1">【目撃者】手札の全目撃結果</h3>
+                <p className="text-xs font-bold text-amber-950 mb-4">
+                  [ {witnessNotice.targetName} ] の手札をすべて閲覧しています
+                </p>
+
+                <div className="grid grid-cols-2 gap-2 mb-6">
+                  {witnessNotice.cards.map((c, i) => (
+                    <div key={i} className={`p-3 rounded-xl border-2 ${c.border} ${c.bg} ${c.text} text-left shadow`}>
+                      <span className="text-[9px] font-black bg-black/20 px-1 rounded">{c.tag}</span>
+                      <div className="font-black text-xs mt-1">{c.name}</div>
+                      <div className="text-[8px] opacity-80 mt-0.5 leading-tight">{c.desc}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setWitnessNotice(null)}
+                  className="w-full bg-rose-500 hover:bg-rose-400 text-white font-black py-3 rounded-2xl border-3 border-slate-900 pop-button text-sm"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 【うわさ】結果の一時中央ポップアップ */}
           {rumorResultNotice && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-sm w-full pop-shadow text-slate-900 text-center animate-pop-card">
@@ -1377,7 +1463,7 @@
             </div>
           )}
 
-          {/* 対象指定モーダル (探偵・いぬ・取り引き対象決定) */}
+          {/* 対象指定モーダル (探偵・いぬ・目撃者・取り引き対象決定) */}
           {pendingTargetCard && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-amber-400 border-4 border-slate-900 rounded-3xl p-6 max-w-sm w-full pop-shadow text-slate-900">
